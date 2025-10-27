@@ -1,0 +1,388 @@
+<!DOCTYPE html>
+<html lang="ar" dir="rtl">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>ESP32 Configuration - Smart Warehouse</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+        
+        body {
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            min-height: 100vh;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+        }
+        
+        .config-container {
+            background: white;
+            padding: 2rem;
+            border-radius: 15px;
+            box-shadow: 0 20px 40px rgba(0,0,0,0.1);
+            max-width: 500px;
+            width: 90%;
+        }
+        
+        .header {
+            text-align: center;
+            margin-bottom: 2rem;
+        }
+        
+        .header h1 {
+            color: #333;
+            margin-bottom: 0.5rem;
+        }
+        
+        .header p {
+            color: #666;
+        }
+        
+        .form-group {
+            margin-bottom: 1.5rem;
+        }
+        
+        .form-group label {
+            display: block;
+            margin-bottom: 0.5rem;
+            color: #333;
+            font-weight: 600;
+        }
+        
+        .form-group input {
+            width: 100%;
+            padding: 1rem;
+            border: 2px solid #e1e5e9;
+            border-radius: 8px;
+            font-size: 1rem;
+            transition: border-color 0.3s ease;
+        }
+        
+        .form-group input:focus {
+            outline: none;
+            border-color: #667eea;
+        }
+        
+        .btn {
+            width: 100%;
+            padding: 1rem 2rem;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: white;
+            border: none;
+            border-radius: 8px;
+            font-size: 1rem;
+            font-weight: 600;
+            cursor: pointer;
+            transition: transform 0.2s ease;
+        }
+        
+        .btn:hover {
+            transform: translateY(-2px);
+        }
+        
+        .btn:active {
+            transform: translateY(0);
+        }
+        
+        .status {
+            margin-top: 1rem;
+            padding: 1rem;
+            border-radius: 8px;
+            text-align: center;
+            font-weight: 600;
+        }
+        
+        .status.success {
+            background: #d4edda;
+            color: #155724;
+            border: 1px solid #c3e6cb;
+        }
+        
+        .status.error {
+            background: #f8d7da;
+            color: #721c24;
+            border: 1px solid #f5c6cb;
+        }
+        
+        .status.info {
+            background: #d1ecf1;
+            color: #0c5460;
+            border: 1px solid #bee5eb;
+        }
+        
+        .hidden {
+            display: none;
+        }
+        
+        .instructions {
+            background: #f8f9fa;
+            padding: 1rem;
+            border-radius: 8px;
+            margin-top: 1rem;
+            font-size: 0.875rem;
+            color: #666;
+        }
+        
+        .instructions h3 {
+            color: #333;
+            margin-bottom: 0.5rem;
+        }
+        
+        .instructions ol {
+            margin: 0.5rem 0;
+            padding-right: 1rem;
+        }
+        
+        .instructions li {
+            margin-bottom: 0.25rem;
+        }
+    </style>
+</head>
+<body>
+    <div class="config-container">
+        <div class="header">
+            <h1>🤖 تكوين ESP32</h1>
+            <p>إعداد الاتصال مع نظام المستودع الذكي</p>
+        </div>
+        
+        <form id="configForm">
+            <div class="form-group">
+                <label for="espIP">عنوان IP الخاص بـ ESP32:</label>
+                <input type="text" id="espIP" name="espIP" 
+                       placeholder="192.168.1.100" 
+                       pattern="^(\d{1,3}\.){3}\d{1,3}$"
+                       required>
+            </div>
+            
+            <div class="form-group">
+                <label for="wsPort">منفذ WebSocket:</label>
+                <input type="number" id="wsPort" name="wsPort" 
+                       value="81" min="1" max="65535" required>
+            </div>
+            
+            <button type="submit" class="btn" id="connectBtn">
+                🔌 اختبار الاتصال
+            </button>
+        </form>
+        
+        <div id="status" class="status hidden"></div>
+        
+        <div class="instructions">
+            <h3>📋 التعليمات:</h3>
+            <ol>
+                <li>تأكد من تشغيل ESP32 واتصاله بنفس الشبكة</li>
+                <li>افتح Serial Monitor وابحث عن عنوان IP</li>
+                <li>أدخل عنوان IP في الحقل أعلاه</li>
+                <li>اضغط على "اختبار الاتصال"</li>
+                <li>انتظر رسالة التأكيد</li>
+            </ol>
+            <p><strong>ملاحظة:</strong> إذا فشل الاتصال، تحقق من إعدادات الجدار الناري وتأكد أن ESP32 يعمل بشكل صحيح.</p>
+        </div>
+    </div>
+
+    <script>
+        class ESP32Config {
+            constructor() {
+                this.websocket = null;
+                this.connected = false;
+                this.setupEventListeners();
+                this.loadSavedConfig();
+            }
+            
+            setupEventListeners() {
+                const form = document.getElementById('configForm');
+                form.addEventListener('submit', (e) => this.handleSubmit(e));
+            }
+            
+            loadSavedConfig() {
+                const savedIP = localStorage.getItem('esp32_ip');
+                const savedPort = localStorage.getItem('esp32_port');
+                
+                if (savedIP) {
+                    document.getElementById('espIP').value = savedIP;
+                }
+                if (savedPort) {
+                    document.getElementById('wsPort').value = savedPort;
+                }
+            }
+            
+            async handleSubmit(e) {
+                e.preventDefault();
+                
+                const ip = document.getElementById('espIP').value.trim();
+                const port = document.getElementById('wsPort').value;
+                
+                if (!this.validateIP(ip)) {
+                    this.showStatus('عنوان IP غير صحيح. يرجى التحقق من الصيغة.', 'error');
+                    return;
+                }
+                
+                this.showStatus('جاري الاتصال مع ESP32...', 'info');
+                this.disableForm(true);
+                
+                try {
+                    await this.testConnection(ip, port);
+                } catch (error) {
+                    this.showStatus(`فشل الاتصال: ${error.message}`, 'error');
+                    this.disableForm(false);
+                }
+            }
+            
+            validateIP(ip) {
+                const ipPattern = /^(\d{1,3}\.){3}\d{1,3}$/;
+                if (!ipPattern.test(ip)) return false;
+                
+                const parts = ip.split('.');
+                return parts.every(part => {
+                    const num = parseInt(part, 10);
+                    return num >= 0 && num <= 255;
+                });
+            }
+            
+            testConnection(ip, port) {
+                return new Promise((resolve, reject) => {
+                    const wsURL = `ws://${ip}:${port}/ws`;
+                    
+                    try {
+                        this.websocket = new WebSocket(wsURL);
+                        
+                        const timeout = setTimeout(() => {
+                            if (this.websocket) {
+                                this.websocket.close();
+                            }
+                            reject(new Error('انتهت مهلة الاتصال'));
+                        }, 10000);
+                        
+                        this.websocket.onopen = () => {
+                            clearTimeout(timeout);
+                            this.connected = true;
+                            
+                            // Send test message
+                            this.websocket.send(JSON.stringify({
+                                command: 'test_connection',
+                                timestamp: Date.now()
+                            }));
+                        };
+                        
+                        this.websocket.onmessage = (event) => {
+                            try {
+                                const data = JSON.parse(event.data);
+                                if (data.type === 'confirmation') {
+                                    this.handleSuccessfulConnection(ip, port);
+                                    resolve();
+                                }
+                            } catch (error) {
+                                console.log('Received message:', event.data);
+                                // Even if we can't parse JSON, connection is working
+                                this.handleSuccessfulConnection(ip, port);
+                                resolve();
+                            }
+                        };
+                        
+                        this.websocket.onerror = (error) => {
+                            clearTimeout(timeout);
+                            reject(new Error('خطأ في الاتصال بـ WebSocket'));
+                        };
+                        
+                        this.websocket.onclose = () => {
+                            clearTimeout(timeout);
+                            if (!this.connected) {
+                                reject(new Error('فشل في الاتصال مع ESP32'));
+                            }
+                        };
+                        
+                    } catch (error) {
+                        reject(new Error('خطأ في إنشاء اتصال WebSocket'));
+                    }
+                });
+            }
+            
+            handleSuccessfulConnection(ip, port) {
+                // Save configuration
+                localStorage.setItem('esp32_ip', ip);
+                localStorage.setItem('esp32_port', port);
+                
+                this.showStatus(`✅ تم الاتصال بنجاح مع ESP32 على ${ip}:${port}`, 'success');
+                
+                // Close WebSocket
+                if (this.websocket) {
+                    this.websocket.close();
+                }
+                
+                // Enable redirect button
+                setTimeout(() => {
+                    const statusDiv = document.getElementById('status');
+                    statusDiv.innerHTML += `
+                        <br><br>
+                        <button onclick="window.location.href='index.html'" 
+                                style="background: #28a745; color: white; border: none; 
+                                       padding: 0.75rem 1.5rem; border-radius: 5px; 
+                                       cursor: pointer; font-weight: 600;">
+                            🚀 الانتقال إلى المستودع الذكي
+                        </button>
+                    `;
+                }, 1000);
+                
+                this.disableForm(false);
+            }
+            
+            showStatus(message, type) {
+                const statusDiv = document.getElementById('status');
+                statusDiv.textContent = message;
+                statusDiv.className = `status ${type}`;
+                statusDiv.classList.remove('hidden');
+            }
+            
+            disableForm(disabled) {
+                const inputs = document.querySelectorAll('input, button');
+                inputs.forEach(input => {
+                    input.disabled = disabled;
+                });
+                
+                const btn = document.getElementById('connectBtn');
+                if (disabled) {
+                    btn.innerHTML = '⏳ جاري الاتصال...';
+                } else {
+                    btn.innerHTML = '🔌 اختبار الاتصال';
+                }
+            }
+        }
+        
+        // Initialize when page loads
+        document.addEventListener('DOMContentLoaded', () => {
+            new ESP32Config();
+        });
+        
+        // Auto-detect ESP32 IP (attempt common ranges)
+        async function autoDetectESP32() {
+            const commonIPs = [
+                '192.168.1.100', '192.168.1.101', '192.168.1.102',
+                '192.168.0.100', '192.168.0.101', '192.168.4.1'
+            ];
+            
+            for (const ip of commonIPs) {
+                try {
+                    const response = await fetch(`http://${ip}`, { 
+                        method: 'GET', 
+                        timeout: 2000 
+                    });
+                    if (response.ok) {
+                        document.getElementById('espIP').value = ip;
+                        break;
+                    }
+                } catch (error) {
+                    // Continue to next IP
+                }
+            }
+        }
+        
+        // Call auto-detect on page load
+        setTimeout(autoDetectESP32, 1000);
+    </script>
+</body>
+</html>
