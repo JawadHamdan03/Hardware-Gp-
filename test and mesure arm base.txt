@@ -1,0 +1,104 @@
+// ---- Pins ----
+const int DIR_PIN          = 2;
+const int STEP_PIN         = 3;
+const int ENABLE_PIN       = 4;
+const int LIMIT_SWITCH_PIN = 10;   // Active LOW with INPUT_PULLUP
+
+// ---- Geometry / Steps ----
+const int STEPS_PER_CM   = 50;     // 200 steps / 4 cm = 50 steps/cm
+const int CELL_CM        = 9;      // each cell = 9 cm
+const int STEPS_PER_CELL = STEPS_PER_CM * CELL_CM;  // 450
+const int NUM_CELLS      = 5;
+
+// ---- Motion timing ----
+// slower for smoother motion
+const int STEP_DELAY_US_MOVE  = 900;   // travel speed (was 600)
+const int STEP_DELAY_US_FAST  = 700;   // fast homing (was 500)
+const int STEP_DELAY_US_SLOW  = 1500;  // slow precise homing (was 1200)
+const int BACKOFF_STEPS       = 50;    // back away from switch before slow re-approach
+
+// ---- Directions (adjust if wiring is opposite) ----
+const bool DIR_AWAY_FROM_HOME = HIGH; // moves away from limit switch
+const bool DIR_TOWARD_HOME    = LOW;  // moves toward limit switch
+
+// ---- Helpers ----
+inline void stepPulse(int delayUs) {
+  digitalWrite(STEP_PIN, HIGH);
+  delayMicroseconds(delayUs);
+  digitalWrite(STEP_PIN, LOW);
+  delayMicroseconds(delayUs);
+}
+
+void moveSteps(long steps, bool dir, int delayUs) {
+  digitalWrite(DIR_PIN, dir ? HIGH : LOW);
+  for (long i = 0; i < steps; i++) {
+    stepPulse(delayUs);
+  }
+}
+
+// Return true when switch is pressed (active LOW with INPUT_PULLUP)
+inline bool isHomeHit() {
+  return digitalRead(LIMIT_SWITCH_PIN) == LOW;
+}
+
+// Robust homing: fast approach → back off → slow approach
+void homeArm() {
+  // Fast approach toward switch
+  digitalWrite(DIR_PIN, DIR_TOWARD_HOME);
+  while (!isHomeHit()) {
+    stepPulse(STEP_DELAY_US_FAST);
+  }
+
+  // Small backoff so the switch can release
+  moveSteps(BACKOFF_STEPS, DIR_AWAY_FROM_HOME, STEP_DELAY_US_MOVE);
+  delay(5);
+
+  // Slow approach for precise repeatable home
+  digitalWrite(DIR_PIN, DIR_TOWARD_HOME);
+  while (!isHomeHit()) {
+    stepPulse(STEP_DELAY_US_SLOW);
+  }
+
+  // Optional tiny relieve to avoid holding pressure on the switch
+  moveSteps(5, DIR_AWAY_FROM_HOME, STEP_DELAY_US_SLOW);
+}
+
+void goToCellFromHome(int cellIndex) {
+  long targetSteps = (long)cellIndex * STEPS_PER_CELL;
+  moveSteps(targetSteps, DIR_AWAY_FROM_HOME, STEP_DELAY_US_MOVE);
+}
+
+void setup() {
+  Serial.begin(115200);
+
+  pinMode(DIR_PIN, OUTPUT);
+  pinMode(STEP_PIN, OUTPUT);
+  pinMode(ENABLE_PIN, OUTPUT);
+  pinMode(LIMIT_SWITCH_PIN, INPUT_PULLUP);
+
+  digitalWrite(ENABLE_PIN, LOW); // enable driver
+
+  Serial.println("🏁 Homing...");
+  homeArm();
+  Serial.println("✅ Homed. Starting sequence...");
+}
+
+void loop() {
+  for (int cell = 1; cell <= NUM_CELLS; cell++) {
+    Serial.print("➡ Moving to cell ");
+    Serial.println(cell);
+
+    goToCellFromHome(cell);
+
+    Serial.println("⏸ Waiting 2 seconds at cell...");
+    delay(2000);
+
+    Serial.println("↩ Returning to home...");
+    homeArm();
+
+    delay(500);
+  }
+
+  Serial.println("✅ All cells completed. Restarting in 2 seconds...");
+  delay(2000);
+}

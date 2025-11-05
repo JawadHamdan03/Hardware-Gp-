@@ -1,0 +1,54 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <title>Arduino Chat</title>
+  <style>
+    body { font-family: system-ui, Arial; padding: 24px; }
+    #log { border:1px solid #ddd; border-radius:10px; padding:12px; min-height:120px; }
+    input { padding:8px; width:70%; }
+    button { padding:8px 12px; }
+    .row { margin-top:12px; }
+    small { color:#666; }
+  </style>
+</head>
+<body>
+  <h2>💬 Arduino Chat</h2>
+  <div id="log">Waiting for data...</div>
+  <div class="row">
+    <input id="msg" placeholder="Type message..." />
+    <button onclick="sendMessage()">Send</button>
+  </div>
+  <small id="ts"></small>
+
+  <script>
+    async function sendMessage() {
+      const text = document.getElementById('msg').value.trim();
+      if (!text) return;
+      try {
+        await fetch('/send', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ text })
+        });
+        document.getElementById('msg').value = '';
+      } catch (e) {
+        document.getElementById('log').textContent = 'Send error: ' + e.message;
+      }
+    }
+
+    async function poll() {
+      try {
+        const r = await fetch('/message');
+        const j = await r.json();
+        document.getElementById('log').textContent = j.message || '(no message)';
+        document.getElementById('ts').textContent = 'Updated: ' + new Date().toLocaleTimeString();
+      } catch (e) {
+        document.getElementById('log').textContent = 'Fetch error: ' + e.message;
+      }
+    }
+    poll();
+    setInterval(poll, 1000);
+  </script>
+</body>
+</html>
