@@ -1,17 +1,41 @@
 <!DOCTYPE html>
 <html>
+
 <head>
   <meta charset="utf-8">
   <title>Arduino Chat</title>
   <style>
-    body { font-family: system-ui, Arial; padding: 24px; }
-    #log { border:1px solid #ddd; border-radius:10px; padding:12px; min-height:120px; }
-    input { padding:8px; width:70%; }
-    button { padding:8px 12px; }
-    .row { margin-top:12px; }
-    small { color:#666; }
+    body {
+      font-family: system-ui, Arial;
+      padding: 24px;
+    }
+
+    #log {
+      border: 1px solid #ddd;
+      border-radius: 10px;
+      padding: 12px;
+      min-height: 120px;
+    }
+
+    input {
+      padding: 8px;
+      width: 70%;
+    }
+
+    button {
+      padding: 8px 12px;
+    }
+
+    .row {
+      margin-top: 12px;
+    }
+
+    small {
+      color: #666;
+    }
   </style>
 </head>
+
 <body>
   <h2>💬 Arduino Chat</h2>
   <div id="log">Waiting for data...</div>
@@ -51,4 +75,5 @@
     setInterval(poll, 1000);
   </script>
 </body>
+
 </html>

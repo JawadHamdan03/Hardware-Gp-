@@ -1,440 +1,142 @@
-#include <Servo.h>
+#include <PN532_HSU.h>
+#include <PN532.h>
+#include <AccelStepper.h>
 
-// =======================
-// YOUR STEPPER CODE (UNCHANGED)
-// =======================
+// ---------- Pins ----------
+#define DIR_PIN   5
+#define STEP_PIN  6
+#define EN_PIN    7
+#define LDR1_PIN  9   // أول حساس (بداية القشط)
+#define LDR2_PIN  8   // ثاني حساس (نهاية القشط)
 
-// ---- Pins ----
-const int DIR_PIN          = 2;
-const int STEP_PIN         = 3;
-const int ENABLE_PIN       = 4;
-const int LIMIT_SWITCH_PIN = 10;   // Active LOW with INPUT_PULLUP
+// ---------- Settings ----------
+const bool LDR_ACTIVE_LOW = true;   // LOW = جسم موجود
+const float STEPPER_SPEED = 2000.0; // سرعة متوسطة إلى عالية
+const float STEPPER_ACCEL = 1200.0;
+const long STEPS_PER_12CM = 600;    // 12 سم = 600 ستيب
 
-// ---- Geometry / Steps ----
-const int STEPS_PER_CM   = 50;   // 200 steps / 4 cm = 50 steps/cm
-const int CELL_CM        = 9;    // each cell = 9 cm
-const int STEPS_PER_CELL = STEPS_PER_CM * CELL_CM;  // 450
-const int NUM_CELLS      = 5;
+// ---------- PN532 ----------
+PN532_HSU pn532hsu(Serial1);
+PN532 nfc(pn532hsu);
 
-// ---- Motion timing ----
-const int STEP_DELAY_US_FAST  = 700;   // fast homing initial
-const int STEP_DELAY_US_SLOW  = 1500;  // slow final homing
-const int BACKOFF_STEPS       = 50;
+// ---------- Stepper ----------
+AccelStepper stepper(AccelStepper::DRIVER, STEP_PIN, DIR_PIN);
 
-// Travel (forward to cells)
-const int TRAP_DELAY_START_US = 1500;  // smooth start
-const int TRAP_DELAY_MIN_US   = 600;   // top speed
-const float TRAP_RAMP_FRACTION = 0.20f;
+// ---------- State machine ----------
+enum RunState {
+  IDLE,         // لا شيء
+  MOVE_12CM,    // تحريك الجسم 12 سم بعد LDR1
+  WAIT_RFID,    // محاولة قراءة RFID
+  MOVING,       // يتحرك بعد قراءة التاج
+  STOPPED       // توقف عند LDR2
+};
+RunState state = IDLE;
 
-// Homing slow-down profile
-const int HOMING_SLOW_STEPS = 200;   // how many last steps to slow down
-const int HOMING_FAST_DELAY = 700;   // start of return
-const int HOMING_SLOW_DELAY = 1600;  // final approach delay
-
-// ---- Directions ----
-const bool DIR_AWAY_FROM_HOME = HIGH;
-const bool DIR_TOWARD_HOME    = LOW;
-
-// ---- Helpers ----
-inline void stepPulse(int delayUs) {
-  digitalWrite(STEP_PIN, HIGH);
-  delayMicroseconds(delayUs);
-  digitalWrite(STEP_PIN, LOW);
-  delayMicroseconds(delayUs);
+// ---------- Helpers ----------
+bool readLDR(uint8_t pin) {
+  int raw = digitalRead(pin);
+  return LDR_ACTIVE_LOW ? (raw == LOW) : (raw == HIGH);
 }
 
-inline bool isHomeHit() {
-  return digitalRead(LIMIT_SWITCH_PIN) == LOW; // active LOW
-}
-
-// ---- Trapezoid Move ----
-inline int lerpDelay(int startUs, int minUs, long i, long rampSteps) {
-  if (rampSteps <= 0) return minUs;
-  long num = (long)(startUs - minUs) * i;
-  long delta = num / rampSteps;
-  int d = startUs - (int)delta;
-  if (d < minUs) d = minUs;
-  return d;
-}
-
-void moveStepsTrapezoid(long totalSteps, bool dir) {
-  if (totalSteps <= 0) return;
-
-  digitalWrite(DIR_PIN, dir ? HIGH : LOW);
-  long rampSteps = (long)(totalSteps * TRAP_RAMP_FRACTION);
-  if (rampSteps < 40) rampSteps = 40;
-  if (2 * rampSteps > totalSteps) rampSteps = totalSteps / 2;
-  long cruiseSteps = totalSteps - 2 * rampSteps;
-
-  // Accelerate
-  for (long i = 0; i < rampSteps; i++) {
-    int d = lerpDelay(TRAP_DELAY_START_US, TRAP_DELAY_MIN_US, i, rampSteps);
-    stepPulse(d);
+String uidToString(const byte* uid, uint8_t len) {
+  String s;
+  for (uint8_t i = 0; i < len; i++) {
+    if (i) s += ".";
+    s += String(uid[i]);
   }
-
-  // Cruise
-  for (long i = 0; i < cruiseSteps; i++) stepPulse(TRAP_DELAY_MIN_US);
-
-  // Decelerate
-  for (long i = rampSteps; i > 0; i--) {
-    int d = lerpDelay(TRAP_DELAY_START_US, TRAP_DELAY_MIN_US, i - 1, rampSteps);
-    stepPulse(d);
-  }
-}
-
-// ---- Smooth Homing ----
-void homeArm() {
-  // Move fast toward switch first
-  digitalWrite(DIR_PIN, DIR_TOWARD_HOME);
-  long stepsCounter = 0;
-
-  while (!isHomeHit()) {
-    // gradually slow as we approach the switch
-    int delayNow = (stepsCounter < HOMING_SLOW_STEPS)
-        ? HOMING_FAST_DELAY
-        : map(stepsCounter, HOMING_SLOW_STEPS, HOMING_SLOW_STEPS * 3, HOMING_FAST_DELAY, HOMING_SLOW_DELAY);
-    if (delayNow > HOMING_SLOW_DELAY) delayNow = HOMING_SLOW_DELAY;
-
-    stepPulse(delayNow);
-    stepsCounter++;
-
-    if (stepsCounter > 100000L) { Serial.println("⚠️ Homing guard!"); break; }
-  }
-
-  // Back off slightly
-  digitalWrite(DIR_PIN, DIR_AWAY_FROM_HOME);
-  for (int i = 0; i < BACKOFF_STEPS; i++) stepPulse(1000);
-  delay(5);
-
-  // Re-approach slowly for precise home
-  digitalWrite(DIR_PIN, DIR_TOWARD_HOME);
-  while (!isHomeHit()) {
-    stepPulse(HOMING_SLOW_DELAY);
-  }
-
-  // Relieve switch pressure
-  digitalWrite(DIR_PIN, DIR_AWAY_FROM_HOME);
-  for (int i = 0; i < 5; i++) stepPulse(HOMING_SLOW_DELAY);
-}
-
-// ---- Cell Travel (UNCHANGED) ----
-void goToCellFromHome(int cellIndex) {
-  long targetSteps = (long)cellIndex * STEPS_PER_CELL;
-  moveStepsTrapezoid(targetSteps, DIR_AWAY_FROM_HOME);
-}
-
-// ======================= SERVO LAYER (MODERATE SPEED) =======================
-
-// Pins: s1 -> 11, s2 -> 12, s3 -> 13, s4 -> 50, s5 -> 51, s6 -> 24
-Servo s1, s2, s3, s4, s5, s6;
-
-const int S1_PIN = 11; // gripper
-const int S2_PIN = 12;
-const int S3_PIN = 13; // optional
-const int S4_PIN = 50;
-const int S5_PIN = 51;
-const int S6_PIN = 24; // base
-
-// Track current angles (Servo lib has no read())
-int s1Pos=100, s2Pos=90, s3Pos=90, s4Pos=100, s5Pos=10, s6Pos=60; // s4 default = 100°, s5 default = 10°
-
-// Moderate speed ~35 deg/s (faster but still smooth)
-const float SERVO_SPEED_DPS_DEFAULT = 35.0f; // deg per second
-const int   SERVO_STEP_DEG          = 1;     // 1° steps
-
-void servoSmooth(Servo &sv, int &curr, int target, float speed_dps = SERVO_SPEED_DPS_DEFAULT) {
-  target = constrain(target, 0, 180);
-  if (speed_dps <= 0) speed_dps = SERVO_SPEED_DPS_DEFAULT;
-  float perDegDelayMs = 1000.0f / speed_dps;
-  int step = (target > curr) ? SERVO_STEP_DEG : -SERVO_STEP_DEG;
-
-  while (curr != target) {
-    curr += step;
-    if ((step > 0 && curr > target) || (step < 0 && curr < target)) curr = target;
-    sv.write(curr);
-    delay((int)perDegDelayMs);
-  }
-}
-
-// ---- Default pose requirement after every operation: S5=10°, S4=100° ----
-void goDefaultS5S4() {
-  // Move S5 first (shoulder/wrist-up) then S4 (forearm) to avoid scrapes
-  servoSmooth(s5, s5Pos, 10, 35.0f);
-  servoSmooth(s4, s4Pos, 100, 35.0f);
-}
-
-// ====== PICK (exact order & angles you provided) ======
-void moveServosToPickup() {
-  // ////// grab product (to conveyor)
-  servoSmooth(s6, s6Pos, 130, 30.0f); // Base to conveyor
-  servoSmooth(s2, s2Pos,  70, 30.0f);
-  servoSmooth(s1, s1Pos, 130, 28.0f); // grip
-  servoSmooth(s5, s5Pos,  90, 30.0f);
-  servoSmooth(s4, s4Pos,  70, 30.0f);
-  delay(300);
-  servoSmooth(s1, s1Pos, 100, 28.0f); // grip
-
-
-  // ////////////////////////////////// move arm after grabbing (sequence important)
-  servoSmooth(s5, s5Pos,  10, 30.0f);
-  servoSmooth(s2, s2Pos, 120, 30.0f);
-  servoSmooth(s6, s6Pos,  60, 30.0f);
-  servoSmooth(s3, s3Pos, 130, 28.0f); // not critical
-  servoSmooth(s4, s4Pos, 110, 30.0f);
-
-  // ---> Return to required default angles
-  goDefaultS5S4();
-}
-
-// ====== PER-CELL ARM FUNCTIONS (exact sequences) ======
-void cell1_put_then_retract() {
-  // Put in Cell 1 from top
-  s5.write(60);  delay(200);
-  s2.write(80);  delay(200);
-  s4.write(100); delay(200);
-  s1.write(120); delay(300);   // open gripper to release
-
-  // Retract from cell 1
-  s2.write(95);  delay(180);
-  s4.write(110); delay(180);
-  s5.write(10);  delay(180);
-
-  // Sync tracked positions
-  s2Pos=95; s4Pos=110; s5Pos=10; s1Pos=120;
-
-  // ---> Default angles at end
-  goDefaultS5S4();
-}
-
-void cell2_put_then_retract() {
-  // Put in Cell 2
-  s4.write(50);  delay(200);
-  s5.write(50);  delay(200);
-  s2.write(70);  delay(200);
-  s1.write(120); delay(300);   // open gripper to release
-
-  // Retract from cell 2
-  s2.write(90);  delay(180);
-  s4.write(30);  delay(180);
-  s5.write(10);  delay(180);
-
-  s2Pos=90; s4Pos=30; s5Pos=10; s1Pos=120;
-
-  // ---> Default angles at end
-  goDefaultS5S4();
-}
-
-void cell3_put_then_retract() {
-  // Put in Cell 3 (as given)
-  s5.write(0);   delay(180);
-  s4.write(15);  delay(180);
-  s5.write(40);  delay(180);
-  s2.write(50);  delay(180);
-  s5.write(60);  delay(180);
-  s2.write(25);  delay(180);
-  s5.write(70);  delay(200);
-  s1.write(120); delay(300);   // open
-
-  // Retract from cell 3
-  s4.write(0);   delay(180);
-  s5.write(40);  delay(180);
-  s2.write(45);  delay(180);
-  s5.write(0);   delay(180);
-
-  s4Pos=0; s5Pos=0; s2Pos=45; s1Pos=120;
-
-  // ---> Default angles at end
-  goDefaultS5S4();
-}
-
-void cell4_put_then_retract() {
-  // Put in Cell 4
-  s5.write(0);   delay(180);
-  s4.write(0);   delay(180);
-  s2.write(100); delay(180);
-  s5.write(80);  delay(180);
-  s2.write(0);   delay(180);
-  s5.write(90);  delay(180);
-  s4.write(10);  delay(180);
-  s5.write(110); delay(200);
-  s1.write(120); delay(300);   // open
-
-  // Retract from cell 4
-  s5.write(100); delay(180);
-  s2.write(20);  delay(180);
-  s4.write(0);   delay(180);
-  s2.write(0);   delay(180);
-  s5.write(0);   delay(180);
-  s4.write(90);  delay(180);
-
-  s5Pos=0; s2Pos=0; s4Pos=90; s1Pos=120;
-
-  // ---> Default angles at end
-  goDefaultS5S4();
-}
-
-// wrapper used by PLACE / ROW
-void placeInRow_thenRetract(int row) {
-  switch (row) {
-    case 1: cell1_put_then_retract(); break;
-    case 2: cell2_put_then_retract(); break;
-    case 3: cell3_put_then_retract(); break;
-    case 4: cell4_put_then_retract(); break;
-    default: Serial.println("⚠️ Invalid row (1..4)."); break;
-  }
-}
-
-// ======================= COMMAND INTERFACE =======================
-String readCmdLine() {
-  Serial.setTimeout(500);
-  String s = Serial.readStringUntil('\n');
-  s.replace('\r', ' ');
-  s.trim();
   return s;
 }
 
-String normalizeCommand(String s) {
-  s.replace(',', ' ');
-  s.replace('\t', ' ');
-  while (s.indexOf("  ") != -1) s.replace("  ", " ");
-  s.trim();
-  s.toUpperCase();
-  return s;
+bool tryReadRFID(String &outStr) {
+  byte uid[7];
+  uint8_t uidLength;
+  bool success = nfc.readPassiveTargetID(PN532_MIFARE_ISO14443A, uid, &uidLength, 50);
+  if (!success) return false;
+  outStr = uidToString(uid, uidLength);
+  return true;
 }
 
-int splitTokens(const String &s, String out[], int maxTok) {
-  int count = 0, start = 0;
-  while (count < maxTok) {
-    int sp = s.indexOf(' ', start);
-    if (sp < 0) {
-      if (start < s.length()) out[count++] = s.substring(start);
-      break;
-    } else {
-      if (sp > start) out[count++] = s.substring(start, sp);
-      start = sp + 1;
-      while (start < s.length() && s[start] == ' ') start++;
-    }
-  }
-  return count;
+void enableMotor(bool enable) {
+  digitalWrite(EN_PIN, enable ? LOW : HIGH); // LOW = enable
 }
 
-void printHelp() {
-  Serial.println("Commands:");
-  Serial.println("  HOME");
-  Serial.println("  PICK");
-  Serial.println("  GOTO <cell 1..5>     (uses your goToCellFromHome as-is)");
-  Serial.println("  PLACE <cell 1..5> <row 1..4>");
-  Serial.println("  ROW <1..4>           (run only the arm sequence)");
-  Serial.println("Examples: HOME | PICK | GOTO 3 | PLACE 2 1 | ROW 4");
-  Serial.println("Tip: Serial Monitor Line Ending = Newline (or Both NL&CR).");
-}
-
-void handleCommand(String cmdRaw) {
-  if (!cmdRaw.length()) return;
-  Serial.print("📥 Received: \""); Serial.print(cmdRaw); Serial.println("\"");
-
-  String cmd = normalizeCommand(cmdRaw);
-  if (!cmd.length()) { printHelp(); return; }
-
-  const int MAXTOK = 4;
-  String tok[MAXTOK];
-  int nt = splitTokens(cmd, tok, MAXTOK);
-  if (nt == 0) { printHelp(); return; }
-
-  String T0 = tok[0];
-
-  if (T0 == "HOME" || T0 == "H") {
-    Serial.println("🏁 Homing...");
-    homeArm();
-    Serial.println("✅ Homed.");
-    // keep default pose requirement
-    goDefaultS5S4();
-    return;
-  }
-
-  if (T0 == "PICK" || T0 == "P") {
-    Serial.println("🤝 Picking from conveyor...");
-    moveServosToPickup();
-    // default applied inside moveServosToPickup()
-    Serial.println("✅ Pick complete.");
-    return;
-  }
-
-  if (T0 == "GOTO" || T0 == "GO" || T0 == "CELL" || T0 == "COL") {
-    if (nt < 2) { Serial.println("⚠️ Usage: GOTO <cell 1..5>"); return; }
-    int c = tok[1].toInt();
-    if (c < 1 || c > NUM_CELLS) { Serial.println("⚠️ Cell must be 1..5"); return; }
-    Serial.print("➡ Going to cell "); Serial.println(c);
-    goToCellFromHome(c);  // <-- your original function, unchanged
-    Serial.println("✅ Reached cell.");
-    // keep arm parked in default after travel
-    goDefaultS5S4();
-    return;
-  }
-
-  if (T0 == "PLACE" || T0 == "PUT" || T0 == "PL") {
-    if (nt < 3) { Serial.println("⚠️ Usage: PLACE <cell 1..5> <row 1..4>"); return; }
-    int c = tok[1].toInt();
-    int r = tok[2].toInt();
-    if (c < 1 || c > NUM_CELLS || r < 1 || r > 4) {
-      Serial.println("⚠️ PLACE bounds: cell 1..5, row 1..4"); return;
-    }
-    Serial.print("📦 Place: cell "); Serial.print(c);
-    Serial.print(", row "); Serial.println(r);
-
-    goToCellFromHome(c);        // move along the rail (unchanged)
-    placeInRow_thenRetract(r);  // arm sequence (ends with default angles)
-
-    Serial.println("↩ Returning HOME...");
-    homeArm();
-    // enforce default once more at the very end (belt & suspenders)
-    goDefaultS5S4();
-    Serial.println("✅ PLACE done.");
-    return;
-  }
-
-  if (T0 == "ROW") {
-    if (nt < 2) { Serial.println("⚠️ Usage: ROW <1..4>"); return; }
-    int r = tok[1].toInt();
-    Serial.print("🦾 Running row "); Serial.println(r);
-    placeInRow_thenRetract(r);  // ends with default angles
-    return;
-  }
-
-  Serial.println("❓ Unknown command."); printHelp();
-}
-
-// ======================= Arduino Setup/Loop =======================
+// ---------- Setup ----------
 void setup() {
   Serial.begin(115200);
+  Serial.println(F("=== Conveyor + PN532 + Dual LDR ==="));
 
-  pinMode(DIR_PIN, OUTPUT);
-  pinMode(STEP_PIN, OUTPUT);
-  pinMode(ENABLE_PIN, OUTPUT);
-  pinMode(LIMIT_SWITCH_PIN, INPUT_PULLUP);
-  digitalWrite(ENABLE_PIN, LOW); // enable stepper driver
+  pinMode(LDR1_PIN, INPUT_PULLUP);
+  pinMode(LDR2_PIN, INPUT_PULLUP);
+  pinMode(EN_PIN, OUTPUT);
+  enableMotor(false);
 
-  s1.attach(S1_PIN); s1.write(s1Pos);
-  s2.attach(S2_PIN); s2.write(s2Pos);
-  s3.attach(S3_PIN); s3.write(s3Pos);
-  s4.attach(S4_PIN); s4.write(s4Pos); // default 100°
-  s5.attach(S5_PIN); s5.write(s5Pos); // default 10°
-  s6.attach(S6_PIN); s6.write(s6Pos);
-  delay(400);
+  // Stepper setup
+  stepper.setMaxSpeed(STEPPER_SPEED);
+  stepper.setAcceleration(STEPPER_ACCEL);
 
-  Serial.println("=== READY (Moderate servo speed + default S5=10, S4=100 after every op) ===");
-  printHelp();
-
-  // Optional: home at startup
-  Serial.println("🏁 Homing at startup...");
-  homeArm();
-  goDefaultS5S4();  // ensure default parking pose
-  Serial.println("✅ Homed. Awaiting commands.");
+  // PN532 setup
+  Serial1.begin(115200);
+  nfc.begin();
+  uint32_t versiondata = nfc.getFirmwareVersion();
+  if (!versiondata) {
+    Serial.println(F("❌ PN532 not found!"));
+    while (1);
+  }
+  nfc.SAMConfig();
+  Serial.println(F("✅ PN532 Ready."));
+  Serial.println(F("Waiting for object at LDR1..."));
 }
 
+// ---------- Loop ----------
 void loop() {
-  if (Serial.available()) {
-    String cmd = readCmdLine();
-    if (cmd.length()) handleCommand(cmd);
+  stepper.run(); // يحافظ على الحركة الناعمة
+
+  switch (state) {
+
+    case IDLE:
+      if (readLDR(LDR1_PIN)) {
+        Serial.println(F("📦 Object detected at LDR1 — moving 12cm..."));
+        enableMotor(true);
+        stepper.moveTo(stepper.currentPosition() + STEPS_PER_12CM);
+        state = MOVE_12CM;
+      }
+      break;
+
+    case MOVE_12CM:
+      if (stepper.distanceToGo() == 0) {
+        Serial.println(F("📏 12cm reached — trying to read RFID..."));
+        state = WAIT_RFID;
+      }
+      break;
+
+    case WAIT_RFID: {
+      String tag;
+      if (tryReadRFID(tag)) {
+        Serial.print(F("✅ RFID Tag read: "));
+        Serial.println(tag);
+        // بعد قراءة التاج يبدأ التحرك المستمر
+        stepper.moveTo(999999); // يتحرك باستمرار للأمام
+        Serial.println(F("▶ Conveyor moving until LDR2 triggered..."));
+        state = MOVING;
+      }
+      break;
+    }
+
+    case MOVING:
+      if (readLDR(LDR2_PIN)) {
+        Serial.println(F("⛔ LDR2 detected object — stopping conveyor."));
+        stepper.stop();
+        enableMotor(false);
+        state = STOPPED;
+      }
+      break;
+
+    case STOPPED:
+      if (!readLDR(LDR2_PIN)) {
+        Serial.println(F("✅ Object cleared — back to idle."));
+        stepper.setCurrentPosition(0);
+        state = IDLE;
+      }
+      break;
   }
 }
