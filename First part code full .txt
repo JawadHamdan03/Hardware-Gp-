@@ -2,7 +2,27 @@
 #include <PN532_HSU.h>
 #include <PN532.h>
 #include <AccelStepper.h>
+#include <LiquidCrystal_I2C.h>
 #include <math.h>    // for fabs
+
+// ============================
+//          LCD SETTINGS
+// ============================
+
+// I2C 16x2 LCD at address 0x27
+LiquidCrystal_I2C lcd(0x27, 16, 2);
+void lcdStatus(const char* line1, const char* line2) {
+  lcd.clear();
+  lcd.setCursor(0, 0);
+  lcd.print(line1);
+  lcd.setCursor(0, 1);
+  lcd.print(line2);
+}
+
+// Overloads for String
+void lcdStatus(const String &l1, const String &l2) {
+  lcdStatus(l1.c_str(), l2.c_str());
+}
 
 // ============================
 //       ARM STEPPER SETTINGS
@@ -61,6 +81,9 @@ const float SERVO_SPEED_DPS_DEFAULT = 35.0f;
 #define CONV_STEP_PIN  6
 #define CONV_EN_PIN    7
 
+// EN polarity (MOST drivers A4988/DRV8825 are ACTIVE LOW)
+const bool CONV_EN_ACTIVE_LOW = true;   // if motor still hums when idle, try false
+
 // LDR sensors
 #define LDR1_PIN  9   // start sensor
 #define LDR2_PIN  8   // end sensor
@@ -72,8 +95,8 @@ const bool LDR_ACTIVE_LOW = true;   // LOW = object present
 const float STEPPER_SPEED = 1500.0;   // steps/s
 const float STEPPER_ACCEL = 800.0;    // steps/s^2
 
-// أنت عدلتها لـ 550
-const long STEPS_PER_12CM = 550;      // تقريباً 12 سم
+// You set this to ~12 cm
+const long STEPS_PER_12CM = 550;
 
 // LDR filtering
 const uint8_t LDR_SAMPLES   = 3;
@@ -95,6 +118,7 @@ enum RunState {
   STOPPED       // stopped at LDR2
 };
 RunState convState = IDLE;
+RunState prevConvState = IDLE;   // to update LCD only when state changes
 
 // ============================
 //       RFID TAG ARRAYS
@@ -146,6 +170,8 @@ const int TAG_ROW[NUM_TAGS] = {
 // Current target for this item (set when we read RFID)
 int targetCol = -1;
 int targetRow = -1;
+char lastSymbol = '?';
+String lastTag = "";
 
 // Find index of tag in TAG_IDS, or -1 if not found
 int findTagIndex(const String &tag) {
@@ -215,6 +241,7 @@ void moveStepsTrapezoid(long totalSteps, bool dir) {
 
 void homeArm() {
   Serial.println("Homing arm...");
+  lcdStatus("CMD: HOME", "Homing arm...");
 
   digitalWrite(DIR_PIN, DIR_TOWARD_HOME);
   long safetyCounter = 0;
@@ -241,6 +268,7 @@ void homeArm() {
 
   currentStepPos = 0;
   Serial.println("Arm homed.");
+  lcdStatus("CMD: HOME", "Arm homed");
 }
 
 // ============================
@@ -259,6 +287,10 @@ void goToColumn(int col) {
   Serial.print(col);
   Serial.print(" -> steps: ");
   Serial.println(moveSteps);
+
+  String line1 = "GOTO COL ";
+  line1 += col;
+  lcdStatus(line1, "Moving...");
 
   moveStepsTrapezoid(labs(moveSteps), dir);
 }
@@ -321,6 +353,7 @@ void goDefaultS5S4() {
 // ============================
 
 void moveServosToPickup() {
+  lcdStatus("PICK", "From conveyor");
   // Approach pickup
   servoSmooth(s6, s6Pos, 137);
   servoSmooth(s2, s2Pos, 70);
@@ -395,12 +428,17 @@ void row3_put_then_retract() {
 }
 
 void placeInRow_thenRetract(int row) {
+  String line1 = "PLACE R";
+  line1 += row;
+  lcdStatus(line1, "Placing...");
+
   switch (row) {
     case 1: row1_put_then_retract(); break;
     case 2: row2_put_then_retract(); break;
     case 3: row3_put_then_retract(); break;
     default:
       Serial.println("Invalid row (1..3).");
+      lcdStatus("ERROR", "Row invalid");
       break;
   }
 }
@@ -419,12 +457,16 @@ String readCommand() {
 
 void handleCommand(String cmd) {
   if (cmd.startsWith("HOME")) {
+    Serial.println("CMD: HOME");
+    lcdStatus("CMD: HOME", "");
     goDefaultS5S4();
     homeArm();
     return;
   }
 
   if (cmd.startsWith("PICK")) {
+    Serial.println("CMD: PICK");
+    lcdStatus("CMD: PICK", "");
     moveServosToPickup();
     goDefaultS5S4();
     homeArm();
@@ -436,6 +478,8 @@ void handleCommand(String cmd) {
     if (spaceIndex < 0) return;
 
     int col = cmd.substring(spaceIndex + 1).toInt();
+    Serial.print("CMD: GOTO ");
+    Serial.println(col);
     goToColumn(col);
     goDefaultS5S4();
     homeArm();
@@ -450,6 +494,11 @@ void handleCommand(String cmd) {
     int col = cmd.substring(space1 + 1, space2).toInt();
     int row = cmd.substring(space2 + 1).toInt();
 
+    Serial.print("CMD: PLACE ");
+    Serial.print(col);
+    Serial.print(" ");
+    Serial.println(row);
+
     goToColumn(col);
     placeInRow_thenRetract(row);
     goDefaultS5S4();
@@ -458,6 +507,7 @@ void handleCommand(String cmd) {
   }
 
   Serial.println("Unknown command.");
+  lcdStatus("CMD: UNKNOWN", "");
 }
 
 // ============================
@@ -498,7 +548,11 @@ bool tryReadRFID(String &outStr) {
 }
 
 void enableMotor(bool enable) {
-  digitalWrite(CONV_EN_PIN, enable ? LOW : HIGH); // LOW = enable (most drivers)
+  if (CONV_EN_ACTIVE_LOW) {
+    digitalWrite(CONV_EN_PIN, enable ? LOW : HIGH);  // LOW = enable
+  } else {
+    digitalWrite(CONV_EN_PIN, enable ? HIGH : LOW);  // HIGH = enable
+  }
 }
 
 // ============================
@@ -507,7 +561,13 @@ void enableMotor(bool enable) {
 
 void setup() {
   Serial.begin(115200);
-  Serial.println("=== Arm + Conveyor + PN532 (tags→cells, instant stop on LDR2) ===");
+
+  // LCD init
+  lcd.init();
+  lcd.backlight();
+  lcdStatus("System Start", "Init...");
+
+  Serial.println("=== Arm + Conveyor + PN532 (LCD + tags→cells) ===");
 
   // Arm stepper pins
   pinMode(DIR_PIN, OUTPUT);
@@ -544,11 +604,48 @@ void setup() {
   uint32_t versiondata = nfc.getFirmwareVersion();
   if (!versiondata) {
     Serial.println("PN532 not found!");
+    lcdStatus("ERROR", "PN532 not found");
     while (1);
   }
   nfc.SAMConfig();
   Serial.println("PN532 ready.");
-  Serial.println("Waiting for object at LDR1...");
+  lcdStatus("Ready", "Waiting LDR1");
+}
+
+// ============================
+//   STATE → LCD STATUS HELP
+// ============================
+
+void updateLCDForState() {
+  if (convState == prevConvState) return;
+  prevConvState = convState;
+
+  switch (convState) {
+    case IDLE:
+      lcdStatus("IDLE", "Waiting LDR1");
+      break;
+    case MOVE_12CM:
+      lcdStatus("MOVE 12cm", "");
+      break;
+    case WAIT_RFID:
+      lcdStatus("WAIT RFID", "");
+      break;
+    case MOVING: {
+      String l1 = "MOVING ";
+      if (lastSymbol != '?') {
+        l1 += lastSymbol;
+        l1 += " C";
+        l1 += targetCol;
+        l1 += "R";
+        l1 += targetRow;
+      }
+      lcdStatus(l1, "To LDR2");
+      break;
+    }
+    case STOPPED:
+      lcdStatus("STOPPED", "Clear LDR2");
+      break;
+  }
 }
 
 // ============================
@@ -559,9 +656,12 @@ void loop() {
   // Keep conveyor stepper running
   conveyorStepper.run();
 
+  updateLCDForState();
+
   // Conveyor state machine
   switch (convState) {
     case IDLE:
+      enableMotor(false);  // ensure motor off in idle
       if (readLDRStable(LDR1_PIN)) {
         Serial.println("Object detected at LDR1 — moving 12 cm...");
         enableMotor(true);
@@ -583,22 +683,31 @@ void loop() {
         Serial.print("RFID Tag read: ");
         Serial.println(tag);
 
+        lastTag = tag;
         int idx = findTagIndex(tag);
         if (idx >= 0) {
-          Serial.print("✅ Known tag: symbol = ");
-          Serial.print(TAG_SYMBOLS[idx]);
-          Serial.print(" | index = ");
-          Serial.println(idx);
+          lastSymbol = TAG_SYMBOLS[idx];
+          targetCol  = TAG_COL[idx];
+          targetRow  = TAG_ROW[idx];
 
-          targetCol = TAG_COL[idx];
-          targetRow = TAG_ROW[idx];
-
-          Serial.print("→ Will place at col ");
+          Serial.print("✅ Known tag: ");
+          Serial.print(lastSymbol);
+          Serial.print(" -> col ");
           Serial.print(targetCol);
-          Serial.print(", row ");
+          Serial.print(" row ");
           Serial.println(targetRow);
+
+          String line1 = "TAG:";
+          line1 += lastSymbol;
+          String line2 = "C";
+          line2 += targetCol;
+          line2 += " R";
+          line2 += targetRow;
+          lcdStatus(line1, line2);
         } else {
           Serial.println("⚠ Unknown tag (not in array).");
+          lcdStatus("TAG UNKNOWN", "");
+          lastSymbol = '?';
           targetCol = -1;
           targetRow = -1;
         }
@@ -613,15 +722,16 @@ void loop() {
     case MOVING:
       if (readLDRStable(LDR2_PIN)) {
         Serial.println("LDR2 detected object — INSTANT stop + pick with arm.");
+        lcdStatus("LDR2 HIT", "Stop & pick");
 
-        // ⛔ إيقاف فوري: تعطيل الدرايفر
+        // Instant electrical stop: disable driver
         enableMotor(false);
 
-        // اختياري: أوقف أي هدف حالي في AccelStepper
+        // Stop AccelStepper logically
         conveyorStepper.stop();
         conveyorStepper.setCurrentPosition(conveyorStepper.currentPosition());
 
-        delay(50);  // خلي الميكانيك يستقر شوية
+        delay(50);  // small settle time
 
         // 1) Pick from conveyor
         moveServosToPickup();
@@ -633,10 +743,19 @@ void loop() {
           Serial.print(", row ");
           Serial.println(targetRow);
 
+          String line1 = "PLACE ";
+          line1 += lastSymbol;
+          String line2 = "C";
+          line2 += targetCol;
+          line2 += " R";
+          line2 += targetRow;
+          lcdStatus(line1, line2);
+
           goToColumn(targetCol);
           placeInRow_thenRetract(targetRow);
         } else {
           Serial.println("⚠ No valid targetCol/targetRow set for this item.");
+          lcdStatus("ERROR", "No target cell");
         }
 
         // 3) Return arm to default and home X-axis
@@ -646,6 +765,8 @@ void loop() {
         // Reset target for next item
         targetCol = -1;
         targetRow = -1;
+        lastSymbol = '?';
+        lastTag = "";
 
         Serial.println("Conveyor stopped, item placed — waiting for object to clear LDR2.");
         convState = STOPPED;
@@ -653,6 +774,7 @@ void loop() {
       break;
 
     case STOPPED:
+      enableMotor(false);   // keep motor OFF
       if (!readLDRStable(LDR2_PIN)) {
         Serial.println("Object cleared — back to idle.");
         conveyorStepper.setCurrentPosition(0);
