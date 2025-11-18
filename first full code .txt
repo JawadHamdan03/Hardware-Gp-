@@ -1,370 +1,821 @@
 #include <Servo.h>
 
+
+
 // ============================
+
 //       STEPPER SETTINGS
+
 // ============================
+
+
 
 // Pins
+
 const int DIR_PIN = 2;
+
 const int STEP_PIN = 3;
+
 const int ENABLE_PIN = 4;
+
 const int LIMIT_SWITCH_PIN = 10;
 
+
+
 // Steps per cm
+
 const int STEPS_PER_CM = 50;
 
+
+
 // Column positions (absolute from home in cm)
+
 const float COL_ABS_CM[4] = {8, 22, 36, 50};
+
 const int NUM_COLUMNS = 4;
 
+
+
 // Rows
+
 const int NUM_ROWS = 3;
 
+
+
 // Stepper speed profile
+
 const int TRAP_DELAY_START_US = 1500;
+
 const int TRAP_DELAY_MIN_US   = 600;
+
 const float TRAP_RAMP_FRACTION = 0.2;
+
 const bool DIR_AWAY_FROM_HOME = HIGH;
+
 const bool DIR_TOWARD_HOME    = LOW;
+
 const int BACKOFF_STEPS       = 50;
 
+
+
 // Track current step position from home
+
 long currentStepPos = 0;
 
+
+
 // ============================
+
 //         SERVO SETTINGS
+
 // ============================
+
+
 
 Servo s1, s2, s3, s4, s5, s6;
+
 const int S1_PIN = 11, S2_PIN = 12, S3_PIN = 13, S4_PIN = 50, S5_PIN = 51, S6_PIN = 24;
-int s1Pos = 100, s2Pos = 90, s3Pos = 90, s4Pos = 100, s5Pos = 10, s6Pos = 60;
+
+
+
+// Default pose (global default)
+
+int s1Pos = 100;
+
+int s2Pos = 90;
+
+int s3Pos = 90;
+
+int s4Pos = 100;
+
+int s5Pos = 10;
+
+int s6Pos = 65;
+
+
+
 const float SERVO_SPEED_DPS_DEFAULT = 35.0f;
 
+
+
 // ============================
+
 //       STEPPER HELPERS
+
 // ============================
+
+
 
 inline void stepPulse(int delayUs) {
+
   digitalWrite(STEP_PIN, HIGH);
+
   delayMicroseconds(delayUs);
+
   digitalWrite(STEP_PIN, LOW);
+
   delayMicroseconds(delayUs);
+
 }
+
+
 
 inline bool isHomeHit() {
-  return digitalRead(LIMIT_SWITCH_PIN) == LOW;
+
+  return (digitalRead(LIMIT_SWITCH_PIN) == LOW);
+
 }
+
+
 
 inline int lerpDelay(int startUs, int minUs, long i, long rampSteps) {
+
   long num = (long)(startUs - minUs) * i;
+
   long result = startUs - (num / rampSteps);
+
   return (result < minUs ? minUs : result);
+
 }
 
-// ---- NEW: report stepper speed & acceleration (approx) ----
-void reportStepperProfile(long totalSteps) {
-  // Convert delays to speeds
-  float startDelay = (float)TRAP_DELAY_START_US;
-  float minDelay   = (float)TRAP_DELAY_MIN_US;
 
-  // Each step uses two delays (HIGH + LOW), so period ≈ 2*delayUs
-  float v_start_steps = 1000000.0f / (2.0f * startDelay);  // steps/sec
-  float v_max_steps   = 1000000.0f / (2.0f * minDelay);    // steps/sec
-
-  float v_start_cm = v_start_steps / STEPS_PER_CM;         // cm/sec
-  float v_max_cm   = v_max_steps   / STEPS_PER_CM;         // cm/sec
-
-  long rampSteps = (long)(totalSteps * TRAP_RAMP_FRACTION);
-  if (rampSteps < 40) rampSteps = 40;
-  if (2 * rampSteps > totalSteps) rampSteps = totalSteps / 2;
-  if (rampSteps <= 0) rampSteps = 1;
-
-  // Approx ramp time: rampSteps * (average period per step)
-  // average delay between start & min: (startDelay + minDelay)/2
-  float avgDelay = (startDelay + minDelay) * 0.5f;  // microseconds
-  float rampTimeSec = (rampSteps * 2.0f * avgDelay) / 1000000.0f; // 2*delay per step
-
-  float accel_steps = (v_max_steps - v_start_steps) / rampTimeSec; // steps/sec^2
-  float accel_cm    = accel_steps / STEPS_PER_CM;                  // cm/sec^2
-
-  Serial.println("=== Stepper profile (approx) ===");
-  Serial.print("Total steps: "); Serial.println(totalSteps);
-  Serial.print("v_start ≈ "); Serial.print(v_start_cm); Serial.println(" cm/s");
-  Serial.print("v_max   ≈ "); Serial.print(v_max_cm);   Serial.println(" cm/s");
-  Serial.print("accel   ≈ "); Serial.print(accel_cm);   Serial.println(" cm/s^2");
-  Serial.println("================================");
-}
 
 void moveStepsTrapezoid(long totalSteps, bool dir) {
+
   if (totalSteps <= 0) return;
 
-  // Print speed & acceleration info for this move
-  reportStepperProfile(totalSteps);
+
 
   digitalWrite(DIR_PIN, dir);
+
+
+
   long rampSteps = totalSteps * TRAP_RAMP_FRACTION;
+
   if (rampSteps < 40) rampSteps = 40;
+
   if (2 * rampSteps > totalSteps) rampSteps = totalSteps / 2;
+
   long cruiseSteps = totalSteps - 2 * rampSteps;
 
-  for (long i = 0; i < rampSteps; i++)
+
+
+  // accel
+
+  for (long i = 0; i < rampSteps; i++) {
+
     stepPulse(lerpDelay(TRAP_DELAY_START_US, TRAP_DELAY_MIN_US, i, rampSteps));
 
-  for (long i = 0; i < cruiseSteps; i++)
+  }
+
+
+
+  // cruise
+
+  for (long i = 0; i < cruiseSteps; i++) {
+
     stepPulse(TRAP_DELAY_MIN_US);
 
-  for (long i = rampSteps; i > 0; i--)
+  }
+
+
+
+  // decel
+
+  for (long i = rampSteps; i > 0; i--) {
+
     stepPulse(lerpDelay(TRAP_DELAY_START_US, TRAP_DELAY_MIN_US, i - 1, rampSteps));
 
+  }
+
+
+
   if (dir == DIR_AWAY_FROM_HOME)
+
     currentStepPos += totalSteps;
+
   else
+
     currentStepPos -= totalSteps;
+
 }
 
+
+
 // ============================
+
 //       HOMING FUNCTION
+
 // ============================
+
+
 
 void homeArm() {
+
   Serial.println("🏁 Homing...");
+
+
+
+  // Move toward home until switch
+
   digitalWrite(DIR_PIN, DIR_TOWARD_HOME);
+
   long safetyCounter = 0;
+
   while (!isHomeHit()) {
+
     stepPulse(1000);
+
     safetyCounter++;
-    if (safetyCounter > 100000) break;
+
+    if (safetyCounter > 100000) break;  // safety
+
   }
 
+
+
+  // Back off a little
+
   digitalWrite(DIR_PIN, DIR_AWAY_FROM_HOME);
-  for (int i = 0; i < BACKOFF_STEPS; i++)
+
+  for (int i = 0; i < BACKOFF_STEPS; i++) {
+
     stepPulse(1200);
 
+  }
+
+
+
+  // Slow re-approach
+
   digitalWrite(DIR_PIN, DIR_TOWARD_HOME);
-  while (!isHomeHit()) stepPulse(1500);
+
+  while (!isHomeHit()) {
+
+    stepPulse(1500);
+
+  }
+
+
+
+  // Small final off-switch to avoid pressing hard
 
   digitalWrite(DIR_PIN, DIR_AWAY_FROM_HOME);
-  for (int i = 0; i < 5; i++) stepPulse(1500);
+
+  for (int i = 0; i < 5; i++) {
+
+    stepPulse(1500);
+
+  }
+
+
 
   currentStepPos = 0;
+
   Serial.println("✅ Homed.");
+
 }
 
+
+
 // ============================
+
 //       MOVE TO COLUMN
+
 // ============================
+
+
 
 void goToColumn(int col) {
+
   if (col < 1) col = 1;
+
   if (col > NUM_COLUMNS) col = NUM_COLUMNS;
 
-  long targetSteps = COL_ABS_CM[col - 1] * STEPS_PER_CM;
-  long moveSteps = targetSteps - currentStepPos;
-  bool dir = (moveSteps >= 0) ? DIR_AWAY_FROM_HOME : DIR_TOWARD_HOME;
 
-  Serial.print("➡ Moving to column "); Serial.print(col);
-  Serial.print(" → steps: "); Serial.println(moveSteps);
+
+  long targetSteps = (long)(COL_ABS_CM[col - 1] * STEPS_PER_CM);
+
+  long moveSteps   = targetSteps - currentStepPos;
+
+  bool dir         = (moveSteps >= 0) ? DIR_AWAY_FROM_HOME : DIR_TOWARD_HOME;
+
+
+
+  Serial.print("➡ Moving to column ");
+
+  Serial.print(col);
+
+  Serial.print(" → steps: ");
+
+  Serial.println(moveSteps);
+
+
 
   moveStepsTrapezoid(labs(moveSteps), dir);
+
 }
 
+
+
 // ============================
+
 //        SERVO MOTION
+
 // ============================
+
+
 
 void servoSmooth(Servo &sv, int &curr, int target, float speed_dps = SERVO_SPEED_DPS_DEFAULT) {
-  if (&sv == &s3) {  // S3 must stay at 90°
+
+  // S3 must stay at 90°
+
+  if (&sv == &s3) {
+
     sv.write(90);
+
     s3Pos = 90;
+
     return;
+
   }
+
+
 
   target = constrain(target, 0, 180);
+
   float delayPerDeg = 1000.0f / speed_dps;
+
   int step = (target > curr) ? 1 : -1;
+
+
+
   while (curr != target) {
+
     curr += step;
-    if ((step > 0 && curr > target) || (step < 0 && curr < target)) curr = target;
+
+    if ((step > 0 && curr > target) || (step < 0 && curr < target)) {
+
+      curr = target;
+
+    }
+
     sv.write(curr);
+
     delay(delayPerDeg);
+
   }
+
 }
+
+
+
+// ============================
+
+//   GLOBAL DEFAULT POSE (with shorter delays)
+
+// ============================
+
+
 
 void goDefaultS5S4() {
+
+  const int SHORT_DELAY = 250;  // ms between joints
+
+  const int S5_DELAY    = 400;  // a bit longer on gripper if needed
+
+
+
+  // S1 → delay
+
+  servoSmooth(s1, s1Pos, 100);
+
+  delay(SHORT_DELAY);
+
+
+
+  // S2 → delay
+
+  servoSmooth(s2, s2Pos, 90);
+
+  delay(SHORT_DELAY);
+
+
+
+  // S5 → delay
+
   servoSmooth(s5, s5Pos, 10);
+
+  delay(S5_DELAY);
+
+
+
+  // S4 → delay
+
   servoSmooth(s4, s4Pos, 100);
+
+  delay(SHORT_DELAY);
+
+
+
+  // S6 → delay
+
   servoSmooth(s6, s6Pos, 65);
-  s3.write(90); // force S3 90°
-  s3Pos = 90;
-}
 
-// ============================
-//       PICK FUNCTION
-// ============================
+  delay(SHORT_DELAY);
 
-void moveServosToPickup() {
-  servoSmooth(s6, s6Pos, 137);
-  servoSmooth(s2, s2Pos, 70);
-  servoSmooth(s1, s1Pos, 140);
-  servoSmooth(s5, s5Pos, 95);
-  servoSmooth(s4, s4Pos, 60);
-  delay(300);
 
-  servoSmooth(s1, s1Pos, 90);
-  servoSmooth(s5, s5Pos, 10);
-  servoSmooth(s2, s2Pos, 120);
-  servoSmooth(s6, s6Pos, 60);
-  servoSmooth(s4, s4Pos, 110);
 
-  goDefaultS5S4();
-}
+  // S3 fixed 90° → delay
 
-// ============================
-//       ROW FUNCTIONS (3 rows)
-// ============================
-
-void row1_put_then_retract() { 
-  s5.write(60);  delay(600); 
-  s2.write(100); delay(600); 
-  s4.write(90);  delay(600); 
-  s1.write(135); delay(600); 
- 
-  s2.write(95);  delay(600);
-  s4.write(110); delay(600);
-  s5.write(10);  delay(600); 
-
-  s2Pos = 95;  s4Pos = 110; 
-  s5Pos = 10;  s1Pos = 120; 
-  goDefaultS5S4();
-}
-
-void row2_put_then_retract() { 
-  s4.write(30);  delay(600); 
-  s5.write(60);  delay(600); 
-  s2.write(60);  delay(600); 
-  s1.write(135); delay(600); 
-
-  s2.write(90);  delay(600); 
-  s4.write(30);  delay(600); 
-  s5.write(10);  delay(600); 
-
-  s2Pos = 90;  s4Pos = 30; 
-  s5Pos = 10;  s1Pos = 120; 
-  goDefaultS5S4();
-}
-
-void row3_put_then_retract() { 
-  s5.write(0);   delay(400); 
-  s4.write(15);  delay(400); 
-  s5.write(40);  delay(400); 
-  s2.write(50);  delay(400); 
-  s5.write(60);  delay(400); 
-  s2.write(25);  delay(400); 
-  s5.write(70);  delay(400); 
-  s1.write(135); delay(400);
-
-  s4.write(0);   delay(400); 
-  s5.write(40);  delay(400); 
-  s2.write(45);  delay(400); 
-  s5.write(0);   delay(400); 
-
-  s4Pos = 0;  s5Pos = 0; 
-  s2Pos = 45; s1Pos = 120; 
-  goDefaultS5S4();
-}
-
-// Place in row wrapper
-void placeInRow_thenRetract(int row) {
-  switch(row) {
-    case 1: row1_put_then_retract(); break;
-    case 2: row2_put_then_retract(); break;
-    case 3: row3_put_then_retract(); break;
-    default: Serial.println("⚠ Invalid row (1..3)."); break;
-  }
-}
-
-// ============================
-//       COMMAND HANDLER
-// ============================
-
-String readCommand() {
-  Serial.setTimeout(500);
-  String cmd = Serial.readStringUntil('\n');
-  cmd.trim();
-  cmd.toUpperCase();
-  return cmd;
-}
-
-void handleCommand(String cmd) {
-  if (cmd.startsWith("HOME")) {
-    homeArm();
-    goDefaultS5S4();
-    return;
-  }
-
-  if (cmd.startsWith("PICK")) {
-    moveServosToPickup();
-    return;
-  }
-
-  if (cmd.startsWith("GOTO")) {
-    int spaceIndex = cmd.indexOf(' ');
-    if (spaceIndex < 0) return;
-    int col = cmd.substring(spaceIndex + 1).toInt();
-    goToColumn(col);
-    return;
-  }
-
-  if (cmd.startsWith("PLACE")) {
-    int space1 = cmd.indexOf(' ');
-    int space2 = cmd.indexOf(' ', space1 + 1);
-    if (space1 < 0 || space2 < 0) return;
-
-    int col = cmd.substring(space1 + 1, space2).toInt();
-    int row = cmd.substring(space2 + 1).toInt();
-
-    goToColumn(col);
-
-    // >>> NEW: wait 2 seconds at target cell before placing
-    delay(1000);
-
-    placeInRow_thenRetract(row);
-    return;
-  }
-
-  Serial.println("Unknown command.");
-}
-
-// ============================
-//         SETUP & LOOP
-// ============================
-
-void setup() {
-  Serial.begin(115200);
-
-  pinMode(DIR_PIN, OUTPUT);
-  pinMode(STEP_PIN, OUTPUT);
-  pinMode(ENABLE_PIN, OUTPUT);
-  pinMode(LIMIT_SWITCH_PIN, INPUT_PULLUP);
-  digitalWrite(ENABLE_PIN, LOW);
-
-  s1.attach(S1_PIN); s1.write(s1Pos);
-  s2.attach(S2_PIN); s2.write(s2Pos);
-  s3.attach(S3_PIN); s3.write(90);   // <<< ALWAYS start at 90°
-  s4.attach(S4_PIN); s4.write(s4Pos);
-  s5.attach(S5_PIN); s5.write(s5Pos);
-  s6.attach(S6_PIN); s6.write(s6Pos);
-
-  homeArm();
-  goDefaultS5S4();
-
-  Serial.println("Ready. Commands: HOME | PICK | GOTO <1-4> | PLACE <col 1-4> <row 1-3>");
-}
-
-void loop() {
-  // Extra safety: keep S3 fixed at 90°
   s3.write(90);
 
-  if (Serial.available())
-    handleCommand(readCommand());
+  s3Pos = 90;
+
+  delay(SHORT_DELAY);
+
+}
+
+
+
+// ============================
+
+//       PICK FUNCTION
+
+// ============================
+
+
+
+void moveServosToPickup() {
+
+  // Approach pickup
+
+  servoSmooth(s6, s6Pos, 137);
+
+  servoSmooth(s2, s2Pos, 70);
+
+  servoSmooth(s1, s1Pos, 140);
+
+  servoSmooth(s5, s5Pos, 95);
+
+  servoSmooth(s4, s4Pos, 60);
+
+  delay(300);
+
+
+
+  // Grab and lift
+
+  servoSmooth(s1, s1Pos, 90);
+
+  servoSmooth(s5, s5Pos, 10);
+
+  servoSmooth(s2, s2Pos, 120);
+
+  servoSmooth(s6, s6Pos, 60);
+
+  servoSmooth(s4, s4Pos, 110);
+
+
+
+  // Default + home handled in command handler
+
+}
+
+
+
+// ============================
+
+//       ROW FUNCTIONS (3 rows)
+
+// ============================
+
+
+
+void row1_put_then_retract() {
+
+  s5.write(60);  delay(600);
+
+  s2.write(95);  delay(600);
+
+  s4.write(90);  delay(600);
+
+  s1.write(135); delay(600);
+
+
+
+  s2.write(95);  delay(600);
+
+  s4.write(110); delay(600);
+
+  s5.write(10);  delay(600);
+
+
+
+  s2Pos = 95;
+
+  s4Pos = 110;
+
+  s5Pos = 10;
+
+  s1Pos = 120;
+
+}
+
+
+
+void row2_put_then_retract() {
+
+  s4.write(40);  delay(600);
+
+  s5.write(60);  delay(600);
+
+  s2.write(50);  delay(600);
+
+  s1.write(135); delay(600);
+
+
+
+  s2.write(90);  delay(600);
+
+  s4.write(30);  delay(600);
+
+  s5.write(10);  delay(600);
+
+
+
+  s2Pos = 90;
+
+  s4Pos = 30;
+
+  s5Pos = 10;
+
+  s1Pos = 120;
+
+}
+
+
+
+void row3_put_then_retract() {
+
+  s5.write(0);   delay(600);
+
+  s4.write(0);   delay(600);
+
+  s5.write(70);  delay(600);
+
+  s2.write(0);  delay(600);
+
+  s5.write(90);  delay(600);
+
+  s4.write(15);  delay(600);
+
+  s5.write(100);  delay(600);
+
+  s1.write(135); delay(600);
+
+
+
+  s4.write(0);   delay(600);
+
+  s5.write(70);  delay(600);
+
+  s2.write(80);  delay(600);
+
+  s5.write(40);   delay(600);
+
+
+
+  s4Pos = 0;
+
+  s5Pos = 0;
+
+  s2Pos = 45;
+
+  s1Pos = 120;
+
+}
+
+
+
+void placeInRow_thenRetract(int row) {
+
+  switch (row) {
+
+    case 1: row1_put_then_retract(); break;
+
+    case 2: row2_put_then_retract(); break;
+
+    case 3: row3_put_then_retract(); break;
+
+    default:
+
+      Serial.println("⚠ Invalid row (1..3).");
+
+      break;
+
+  }
+
+}
+
+
+
+// ============================
+
+//       COMMAND HANDLER
+
+// ============================
+
+
+
+String readCommand() {
+
+  Serial.setTimeout(500);
+
+  String cmd = Serial.readStringUntil('\n');
+
+  cmd.trim();
+
+  cmd.toUpperCase();
+
+  return cmd;
+
+}
+
+
+
+void handleCommand(String cmd) {
+
+  if (cmd.startsWith("HOME")) {
+
+    // 1) Default servos
+
+    goDefaultS5S4();
+
+    // 2) Then home stepper
+
+    homeArm();
+
+    return;
+
+  }
+
+
+
+  if (cmd.startsWith("PICK")) {
+
+    // 1) Do pick operation
+
+    moveServosToPickup();
+
+    // 2) Go to default pose (with shorter delays)
+
+    goDefaultS5S4();
+
+    // 3) Go home with stepper
+
+    homeArm();
+
+    return;
+
+  }
+
+
+
+  if (cmd.startsWith("GOTO")) {
+
+    int spaceIndex = cmd.indexOf(' ');
+
+    if (spaceIndex < 0) return;
+
+
+
+    int col = cmd.substring(spaceIndex + 1).toInt();
+
+    // 1) Move to column
+
+    goToColumn(col);
+
+    // 2) Default pose
+
+    goDefaultS5S4();
+
+    // 3) Go home
+
+    homeArm();
+
+    return;
+
+  }
+
+
+
+  if (cmd.startsWith("PLACE")) {
+
+    int space1 = cmd.indexOf(' ');
+
+    int space2 = cmd.indexOf(' ', space1 + 1);
+
+    if (space1 < 0 || space2 < 0) return;
+
+
+
+    int col = cmd.substring(space1 + 1, space2).toInt();
+
+    int row = cmd.substring(space2 + 1).toInt();
+
+
+
+    // 1) Move to column
+
+    goToColumn(col);
+
+    // 2) Place in row
+
+    placeInRow_thenRetract(row);
+
+    // 3) Default pose
+
+    goDefaultS5S4();
+
+    // 4) Go home
+
+    homeArm();
+
+    return;
+
+  }
+
+
+
+  Serial.println("Unknown command.");
+
+}
+
+
+
+// ============================
+
+//         SETUP & LOOP
+
+// ============================
+
+
+
+void setup() {
+
+  Serial.begin(115200);
+
+
+
+  pinMode(DIR_PIN, OUTPUT);
+
+  pinMode(STEP_PIN, OUTPUT);
+
+  pinMode(ENABLE_PIN, OUTPUT);
+
+  pinMode(LIMIT_SWITCH_PIN, INPUT_PULLUP);
+
+  digitalWrite(ENABLE_PIN, LOW); // enable stepper
+
+
+
+  s1.attach(S1_PIN); s1.write(s1Pos);
+
+  s2.attach(S2_PIN); s2.write(s2Pos);
+
+  s3.attach(S3_PIN); s3.write(90);  // fix S3 at 90°
+
+  s4.attach(S4_PIN); s4.write(s4Pos);
+
+  s5.attach(S5_PIN); s5.write(s5Pos);
+
+  s6.attach(S6_PIN); s6.write(s6Pos);
+
+
+
+  // Initial: home + default
+
+  homeArm();
+
+  goDefaultS5S4();
+
+
+
+  Serial.println("Ready. Commands: HOME | PICK | GOTO <1-4> | PLACE <col 1-4> <row 1-3>");
+
+}
+
+
+
+void loop() {
+
+  if (Serial.available()) {
+
+    String cmd = readCommand();
+
+    handleCommand(cmd);
+
+  }
+
 }
