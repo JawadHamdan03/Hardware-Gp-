@@ -1,0 +1,144 @@
+// ============================
+//   ESP32 Bridge - HTTP -> Serial to Arduino
+//   - Connects to WiFi (mobile hotspot)
+//   - Gets dynamic IP from router
+//   - Registers its IP to Node.js server
+//   - Exposes / and /cmd?c=... for commands
+//   - Forwards commands to Arduino via UART2
+// ============================
+
+#include <WiFi.h>
+#include <WebServer.h>
+#include <HTTPClient.h>
+
+// --------- WiFi config ---------
+const char* ssid     = "Hmood iphone";
+const char* password = "mohammad123";
+
+// --------- Node.js server config ---------
+// حط هون IP اللابتوب اللي عليه السيرفر (نفس شبكة الموبايل)
+const char* serverHost = "172.20.10.3";
+const uint16_t serverPort = 5001;
+       // نفس PORT في server.js
+
+// Use UART2 for Arduino connection
+// RX = GPIO16, TX = GPIO17
+HardwareSerial ArduinoSerial(2);
+
+// HTTP server on port 80
+WebServer server(80);
+
+// ----------------- Handlers -----------------
+
+// Root handler
+void handleRoot() {
+  String msg = "ESP32 Smart Warehouse Bridge\n\n";
+  msg += "Use /cmd?c=HOME\n";
+  msg += "    /cmd?c=PICK\n";
+  msg += "    /cmd?c=GOTO%202\n";
+  msg += "    /cmd?c=PLACE%202%203\n";
+  server.send(200, "text/plain", msg);
+}
+
+// /cmd handler: receive HTTP command and forward to Arduino
+void handleCmd() {
+  if (!server.hasArg("c")) {
+    server.send(400, "text/plain", "Missing 'c' query parameter");
+    return;
+  }
+
+  String cmd = server.arg("c");
+  cmd.trim();
+
+  // Send to Arduino (add newline so Arduino reads full command)
+  ArduinoSerial.print(cmd);
+  ArduinoSerial.print("\n");
+
+  String resp = "Sent to Arduino: [" + cmd + "]";
+  server.send(200, "text/plain", resp);
+
+  Serial.print("HTTP CMD -> Arduino: ");
+  Serial.println(cmd);
+}
+
+// ----------------- Register ESP32 IP at Node.js -----------------
+void registerWithServer() {
+  if (WiFi.status() != WL_CONNECTED) {
+    Serial.println("WiFi not connected, cannot register with server.");
+    return;
+  }
+
+  IPAddress ip = WiFi.localIP();
+  String ipStr = ip.toString();
+
+  String url = "http://" + String(serverHost) + ":" + String(serverPort)
+             + "/api/esp32/register?ip=" + ipStr;
+
+  Serial.print("Registering ESP32 at: ");
+  Serial.println(url);
+
+  HTTPClient http;
+  http.begin(url);
+  int httpCode = http.GET();
+
+  if (httpCode > 0) {
+    Serial.print("Server response code: ");
+    Serial.println(httpCode);
+    String payload = http.getString();
+    Serial.print("Server payload: ");
+    Serial.println(payload);
+  } else {
+    Serial.print("Error registering with server, code: ");
+    Serial.println(httpCode);
+  }
+
+  http.end();
+}
+
+// ----------------- Setup & Loop -----------------
+
+void setup() {
+  Serial.begin(115200); // debug to PC
+  delay(200);
+
+  // Start UART to Arduino
+  ArduinoSerial.begin(115200, SERIAL_8N1, 16, 17); // RX=16, TX=17
+  Serial.println("ESP32 Bridge starting...");
+
+  // Connect WiFi
+  Serial.print("Connecting to WiFi: ");
+  Serial.println(ssid);
+  WiFi.begin(ssid, password);
+
+  while (WiFi.status() != WL_CONNECTED) {
+    delay(500);
+    Serial.print(".");
+  }
+  Serial.println();
+  Serial.print("WiFi connected, IP: ");
+  Serial.println(WiFi.localIP());
+
+  // Register this ESP32 in Node.js server
+  registerWithServer();
+
+  // Setup HTTP routes
+  server.on("/", handleRoot);
+  server.on("/cmd", handleCmd);
+  server.begin();
+  Serial.println("HTTP server started on port 80.");
+}
+
+void loop() {
+  // Handle HTTP requests
+  server.handleClient();
+
+  // Optional: read anything from Arduino and print to Serial Monitor
+  if (ArduinoSerial.available()) {
+    String line = ArduinoSerial.readStringUntil('\n');
+    line.trim();
+    if (line.length() > 0) {
+      Serial.print("From Arduino: ");
+      Serial.println(line);
+    }
+  }
+}

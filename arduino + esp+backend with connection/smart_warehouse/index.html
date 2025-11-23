@@ -1,0 +1,108 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <title>Smart Warehouse Admin</title>
+  <link rel="stylesheet" href="style.css" />
+</head>
+<body>
+  <header class="topbar">
+    <h1>Smart Warehouse Admin</h1>
+    <div class="status">
+      <span id="esp32-status" class="badge badge-gray">ESP32: Unknown</span>
+      <span id="arm-status" class="badge badge-gray">Arm: Ready</span>
+    </div>
+  </header>
+
+  <main class="layout">
+    <section class="panel">
+      <h2>Cells Overview</h2>
+      <div id="cells-grid" class="cells-grid">
+        <!-- filled by JS -->
+      </div>
+    </section>
+
+    <section class="panel panel-right">
+      <div class="card">
+        <h3>Arm Control</h3>
+        <div class="btn-row">
+          <button id="btn-home">Home</button>
+          <button id="btn-pick-conveyor">Pick from Conveyor</button>
+        </div>
+        <div class="form-row">
+          <label>Goto Column:</label>
+          <select id="goto-column">
+            <option value="1">Column 1</option>
+            <option value="2">Column 2</option>
+            <option value="3">Column 3</option>
+            <option value="4">Column 4</option>
+          </select>
+          <button id="btn-goto-column">Go</button>
+        </div>
+        <div class="form-row">
+          <label>Place in Cell:</label>
+          <select id="place-col">
+            <option value="1">Col 1</option>
+            <option value="2">Col 2</option>
+            <option value="3">Col 3</option>
+            <option value="4">Col 4</option>
+          </select>
+          <select id="place-row">
+            <option value="1">Row 1</option>
+            <option value="2">Row 2</option>
+            <option value="3">Row 3</option>
+          </select>
+          <button id="btn-place">Place</button>
+        </div>
+        <div class="form-row">
+          <label>Manual Command (HOME / PICK / GOTO 2 / PLACE 2 3):</label>
+          <input id="manual-cmd" type="text" placeholder="e.g. GOTO 2" />
+          <button id="btn-manual-cmd">Send</button>
+        </div>
+      </div>
+
+      <div class="card">
+        <h3>Product Management</h3>
+        <div class="form-column">
+          <input id="prod-name" type="text" placeholder="Product name" />
+          <input id="prod-sku" type="text" placeholder="SKU (optional)" />
+          <input id="prod-rfid" type="text" placeholder="RFID UID (optional)" />
+          <button id="btn-add-product">Add Product</button>
+        </div>
+        <div class="form-row">
+          <label for="cell-select">Assign Product to Cell:</label>
+          <select id="cell-select"></select>
+        </div>
+        <div class="form-row">
+          <label for="product-select">Product:</label>
+          <select id="product-select"></select>
+          <input id="product-qty" type="number" min="1" value="1" />
+          <button id="btn-assign-product">Assign</button>
+        </div>
+      </div>
+
+      <div class="card">
+        <h3>Recent Operations</h3>
+        <table id="ops-table">
+          <thead>
+            <tr>
+              <th>ID</th>
+              <th>Type</th>
+              <th>Command</th>
+              <th>Status</th>
+              <th>Cell</th>
+              <th>Product</th>
+              <th>Time</th>
+            </tr>
+          </thead>
+          <tbody>
+            <!-- filled by JS -->
+          </tbody>
+        </table>
+      </div>
+    </section>
+  </main>
+
+  <script src="app.js"></script>
+</body>
+</html>
