@@ -1,0 +1,29 @@
+#include <Servo.h>
+
+Servo myServo;
+int servoPin = 51;
+int currentAngle = 80; // زاوية البداية (اختياري)
+
+void setup() {
+  Serial.begin(9600);
+  myServo.attach(servoPin);
+  myServo.write(currentAngle);
+  Serial.println("Send angle (0-180):");
+}
+
+void loop() {
+  if (Serial.available() > 0) {
+    int angle = Serial.parseInt();
+    if (angle >= 0 && angle <= 180) {
+      currentAngle = angle;           // حفظ الزاوية الجديدة
+      myServo.write(currentAngle);    // تحريك السيرفو
+      Serial.print("Moved to: ");
+      Serial.println(currentAngle);
+    } else {
+      Serial.println("Angle out of range (0-180)");
+    }
+
+    // تنظيف الـ buffer لتجنب أوامر متراكمة
+    while (Serial.available() > 0) Serial.read();
+  }
+}

@@ -38,7 +38,7 @@ const int LIMIT_SWITCH_PIN = 10;
 const int STEPS_PER_CM = 50;
 
 // Column positions (absolute from home in cm)
-const float COL_ABS_CM[4] = {8, 22, 36, 50};
+const float COL_ABS_CM[4] = {8, 22, 36, 49};
 const int NUM_COLUMNS = 4;
 
 // Rows
@@ -355,11 +355,14 @@ void goDefaultS5S4() {
 void moveServosToPickup() {
   lcdStatus("PICK", "From conveyor");
   // Approach pickup
-  servoSmooth(s6, s6Pos, 137);
-  servoSmooth(s2, s2Pos, 70);
-  servoSmooth(s1, s1Pos, 140);
-  servoSmooth(s5, s5Pos, 95);
+  servoSmooth(s6, s6Pos, 130);
+  servoSmooth(s2, s2Pos, 55);
+  servoSmooth(s1, s1Pos, 160);
+  servoSmooth(s4, s4Pos, 50);
+  servoSmooth(s5, s5Pos, 80);
   servoSmooth(s4, s4Pos, 60);
+  servoSmooth(s5, s5Pos, 90);
+
   delay(300);
 
   // Grab and lift
@@ -378,7 +381,7 @@ void row1_put_then_retract() {
   s5.write(60);  delay(600);
   s2.write(95);  delay(600);
   s4.write(90);  delay(600);
-  s1.write(135); delay(600);
+  s1.write(160); delay(600);
 
   s2.write(95);  delay(600);
   s4.write(110); delay(600);
@@ -392,9 +395,11 @@ void row1_put_then_retract() {
 
 void row2_put_then_retract() {
   s4.write(40);  delay(600);
-  s5.write(60);  delay(600);
-  s2.write(50);  delay(600);
-  s1.write(135); delay(600);
+  s5.write(40);  delay(600);
+  s4.write(30);  delay(600);
+  s2.write(75);  delay(600);
+  s5.write(70);  delay(600);
+  s1.write(160); delay(600);
 
   s2.write(90);  delay(600);
   s4.write(30);  delay(600);
@@ -409,12 +414,18 @@ void row2_put_then_retract() {
 void row3_put_then_retract() {
   s5.write(0);   delay(600);
   s4.write(0);   delay(600);
-  s5.write(70);  delay(600);
+  s5.write(30);  delay(600);
+  s2.write(110);   delay(600);
+  s5.write(60);  delay(600);
+  s2.write(60);   delay(600);
+  s5.write(75); delay(600);
+  s2.write(10);   delay(600);
+  s5.write(80); delay(600);
+  s4.write(5);   delay(600);
   s2.write(0);   delay(600);
-  s5.write(90);  delay(600);
-  s4.write(15);  delay(600);
-  s5.write(100); delay(600);
-  s1.write(135); delay(600);
+  s5.write(95); delay(600);
+  s4.write(15);   delay(600);
+  s1.write(160); delay(600);
 
   s4.write(0);   delay(600);
   s5.write(70);  delay(600);
