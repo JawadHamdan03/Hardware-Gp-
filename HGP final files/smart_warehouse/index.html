@@ -1,0 +1,664 @@
+<!-- FILE: index.html - COMPLETE UPDATED VERSION -->
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Smart Warehouse Admin - IR Sensors & Loading Zone</title>
+  <link rel="stylesheet" href="style.css" />
+</head>
+
+<body>
+  <div class="container">
+    <header class="topbar">
+      <div class="header-left">
+        <h1>Smart Warehouse Admin</h1>
+        <div class="mode-switch">
+          <label>Mode:</label>
+          <select id="mode-select">
+            <option value="manual">Manual</option>
+            <option value="auto">Auto</option>
+          </select>
+        </div>
+        <div class="strategy-select">
+          <label>Storage Strategy:</label>
+          <select id="strategy-select">
+            <option value="NEAREST_EMPTY">Nearest Empty</option>
+            <option value="ROUND_ROBIN">Round Robin</option>
+            <option value="RANDOM">Random</option>
+            <option value="AI_OPTIMIZED">AI Optimized</option>
+            <option value="FIXED">Fixed Mapping</option>
+          </select>
+        </div>
+      </div>
+      <div class="status-container">
+        <div class="status">
+          <span id="esp32-status" class="badge badge-gray">ESP32: Connecting...</span>
+          <span id="arm-status" class="badge badge-green">Arm: Ready</span>
+          <span id="mode-status" class="badge badge-blue">Manual Mode</span>
+          <span id="conveyor-status" class="badge badge-gray">Conveyor: Idle</span>
+          <span id="strategy-badge" class="badge badge-green">Strategy: NEAREST_EMPTY</span>
+        </div>
+        <div class="sensor-counts">
+          <span class="sensor-count-item">IR Sensors: <span id="ir-sensor-count">12</span>/12</span>
+          <span class="sensor-count-item">Loading Zone: <span id="loading-zone-info">Active</span></span>
+          <span class="sensor-count-item">Conveyor: <span id="conveyor-info">Manual</span></span>
+        </div>
+        <div class="loading-indicator">
+          <div class="lds-ring" id="global-loading">
+            <div></div>
+            <div></div>
+            <div></div>
+            <div></div>
+          </div>
+          <span id="loading-text">Ready</span>
+        </div>
+      </div>
+    </header>
+
+    <main class="layout">
+      <section class="panel left-panel">
+        <div class="panel-header">
+          <h2>Warehouse Overview</h2>
+          <div class="legend">
+            <div class="legend-item">
+              <div class="legend-color loading-zone"></div>
+              <span>Loading Zone</span>
+            </div>
+            <div class="legend-item">
+              <div class="legend-color occupied"></div>
+              <span>Occupied (IR Detected)</span>
+            </div>
+            <div class="legend-item">
+              <div class="legend-color empty"></div>
+              <span>Empty</span>
+            </div>
+            <div class="legend-item">
+              <div class="legend-color ldr-active"></div>
+              <span>LDR Active</span>
+            </div>
+            <div class="legend-item">
+              <div class="legend-color sensor-active"></div>
+              <span>IR Sensor Active</span>
+            </div>
+          </div>
+        </div>
+
+        <div class="warehouse-container">
+          <div class="conveyor-section">
+            <div class="conveyor-label">Conveyor Belt</div>
+            <div class="conveyor-status-indicators">
+              <div class="ldr-indicator" id="ldr1-indicator" data-tooltip="LDR1 - Entry Sensor">
+                <div class="ldr-label">LDR1</div>
+                <div class="ldr-light"></div>
+              </div>
+
+              <div class="conveyor" id="conveyor">
+                <div id="conveyor-product" class="conveyor-product">Empty</div>
+              </div>
+
+              <div class="ldr-indicator" id="ldr2-indicator" data-tooltip="LDR2 - Exit Sensor">
+                <div class="ldr-label">LDR2</div>
+                <div class="ldr-light"></div>
+              </div>
+            </div>
+            <div class="rfid-status">
+              <span>RFID Tag: </span>
+              <span id="rfid-tag">None</span>
+            </div>
+
+            <!-- Conveyor Manual Controls -->
+            <div class="conveyor-controls">
+              <button id="btn-conveyor-move" class="btn-warning btn-small">
+                <span class="btn-icon">⚡</span>
+                Move Conveyor
+              </button>
+              <button id="btn-conveyor-stop" class="btn-danger btn-small">
+                <span class="btn-icon">⏹️</span>
+                Stop
+              </button>
+              <button id="btn-test-conveyor" class="btn-secondary btn-small">
+                <span class="btn-icon">🧪</span>
+                Test
+              </button>
+            </div>
+          </div>
+
+          <div class="grid-container">
+            <div class="loading-zone-cell special-cell" id="loading-zone-cell">
+              <div class="cell-header">
+                <span>Loading Zone</span>
+                <span class="cell-status" id="loading-zone-status">EMPTY</span>
+              </div>
+              <div class="cell-body" id="loading-zone-content">
+                <div class="cell-empty">Empty</div>
+                <div class="loading-zone-sensors">
+                  <div class="sensor-info">
+                    <small>Ultrasonic: Active</small>
+                  </div>
+                  <div class="sensor-info">
+                    <small>Servo: Pin 44</small>
+                  </div>
+                </div>
+              </div>
+              <div class="cell-controls">
+                <button id="btn-loading-open" class="btn-warning btn-small">
+                  <span class="btn-icon">🚪</span>
+                  Open
+                </button>
+                <button id="btn-loading-close" class="btn-danger btn-small">
+                  <span class="btn-icon">🔒</span>
+                  Close
+                </button>
+                <button id="btn-loading-check" class="btn-info btn-small">
+                  <span class="btn-icon">📊</span>
+                  Check
+                </button>
+              </div>
+            </div>
+
+          </div>
+          <br />
+          <div id="cells-grid" class="cells-grid"></div>
+        </div>
+
+        <div class="stats-bar">
+          <div class="stat">
+            <span class="stat-label">Total Cells:</span>
+            <span class="stat-value" id="total-cells">12</span>
+          </div>
+          <div class="stat">
+            <span class="stat-label">Occupied:</span>
+            <span class="stat-value" id="occupied-cells">0</span>
+          </div>
+          <div class="stat">
+            <span class="stat-label">Available:</span>
+            <span class="stat-value" id="available-cells">12</span>
+          </div>
+          <div class="stat">
+            <span class="stat-label">Loading Zone:</span>
+            <span class="stat-value" id="loading-status">Empty</span>
+          </div>
+          <div class="stat">
+            <span class="stat-label">IR Sensors:</span>
+            <span class="stat-value" id="active-sensors">12/12</span>
+          </div>
+        </div>
+      </section>
+
+      <section class="panel right-panel">
+        <div class="card mode-controls">
+          <h3>Manual Control</h3>
+
+          <div class="manual-controls" id="manual-controls">
+            <!-- Basic Arm Controls -->
+            <div class="btn-grid">
+              <button id="btn-home" class="btn-primary">
+                <span class="btn-icon">🏠</span>
+                Home Position
+              </button>
+              <button id="btn-pick-conveyor" class="btn-primary">
+                <span class="btn-icon">📥</span>
+                Pick from Conveyor
+              </button>
+
+            </div>
+
+            <!-- Cell Navigation -->
+            <div class="form-group">
+              <label>Go to Column:</label>
+              <div class="input-group">
+                <select id="goto-column">
+                  <option value="1">Column 1</option>
+                  <option value="2">Column 2</option>
+                  <option value="3">Column 3</option>
+                  <option value="4">Column 4</option>
+                </select>
+                <button id="btn-goto-column" class="btn-secondary">Go</button>
+              </div>
+            </div>
+
+            <!-- Place Product -->
+            <div class="form-group">
+              <label>Place in Cell:</label>
+              <div class="input-group">
+                <select id="place-col">
+                  <option value="1">Col 1</option>
+                  <option value="2">Col 2</option>
+                  <option value="3">Col 3</option>
+                  <option value="4">Col 4</option>
+                </select>
+                <select id="place-row">
+                  <option value="1">Row 1</option>
+                  <option value="2">Row 2</option>
+                  <option value="3">Row 3</option>
+                </select>
+                <button id="btn-place" class="btn-secondary">Place</button>
+              </div>
+            </div>
+
+            <!-- Pick from Cell -->
+            <div class="form-group">
+              <label>Pick from Cell:</label>
+              <div class="input-group">
+                <select id="pick-col">
+                  <option value="1">Col 1</option>
+                  <option value="2">Col 2</option>
+                  <option value="3">Col 3</option>
+                  <option value="4">Col 4</option>
+                </select>
+                <select id="pick-row">
+                  <option value="1">Row 1</option>
+                  <option value="2">Row 2</option>
+                  <option value="3">Row 3</option>
+                </select>
+                <button id="btn-pick-cell" class="btn-secondary">Pick</button>
+              </div>
+            </div>
+
+            <!-- Loading Zone Controls -->
+            <div class="form-group">
+              <label>Loading Zone Operations:</label>
+              <div class="btn-grid">
+                <button id="btn-loading-place" value="LOADING_RETURN" class="btn-warning">
+                  <span class="btn-icon">📤</span>
+                  Place to Loading
+                </button>
+                <button id="btn-loading-take" value="LOADING_TAKE" class="btn-warning">
+                  <span class="btn-icon">📥</span>
+                  Take from Loading
+                </button>
+              </div>
+            </div>
+
+
+
+            <!-- Sensor Testing -->
+            <div class="form-group">
+              <label>Sensor Tests:</label>
+              <div class="btn-grid">
+                <button id="btn-test-ir" class="btn-secondary">
+                  <span class="btn-icon">📡</span>
+                  Test IR Sensors
+                </button>
+                <button id="btn-test-ultrasonic" class="btn-secondary">
+                  <span class="btn-icon">📏</span>
+                  Test Ultrasonic
+                </button>
+                <button id="btn-test-rfid" class="btn-secondary">
+                  <span class="btn-icon">🔑</span>
+                  Test RFID
+                </button>
+                <button id="btn-test-ldr" class="btn-secondary">
+                  <span class="btn-icon">💡</span>
+                  Test LDR
+                </button>
+              </div>
+            </div>
+
+            <!-- Manual Command Input -->
+            <div class="form-group">
+              <label>Manual Command:</label>
+              <div class="input-group">
+                <input id="manual-cmd" type="text"
+                  placeholder="e.g., HOME, PICK, GOTO 2, PLACE 2 3, CONVEYOR_MOVE, LOADING_OPEN"
+                  list="command-suggestions" />
+                <datalist id="command-suggestions">
+                  <option value="HOME"></option>
+                  <option value="PICK"></option>
+                  <option value="GOTO 1"></option>
+                  <option value="GOTO 2"></option>
+                  <option value="GOTO 3"></option>
+                  <option value="GOTO 4"></option>
+                  <option value="PLACE 1 1"></option>
+                  <option value="TAKE 1 1"></option>
+                  <option value="LOADING_PLACE"></option>
+                  <option value="LOADING_TAKE"></option>
+                  <option value="LOADING_RETURN"></option>
+                  <option value="LOADING_OPEN"></option>
+                  <option value="LOADING_CLOSE"></option>
+                  <option value="CHECK_LOADING"></option>
+                  <option value="CONVEYOR_MOVE"></option>
+                  <option value="CONVEYOR_STOP"></option>
+                  <option value="STRATEGY NEAREST"></option>
+                  <option value="STRATEGY ROUND_ROBIN"></option>
+                  <option value="STRATEGY RANDOM"></option>
+                  <option value="STRATEGY AI"></option>
+                  <option value="STRATEGY FIXED"></option>
+                  <option value="GET_IR_STATUS"></option>
+                  <option value="GET_LOADING_STATUS"></option>
+                  <option value="TEST_IR_SENSORS"></option>
+                  <option value="TEST_ULTRASONIC"></option>
+                  <option value="TEST_RFID"></option>
+                  <option value="TEST_LDR"></option>
+                  <option value="TEST_CONVEYOR"></option>
+                </datalist>
+                <button id="btn-manual-cmd" class="btn-secondary">Send</button>
+              </div>
+            </div>
+          </div>
+
+          <div class="auto-controls" id="auto-controls" style="display: none;">
+            <div class="auto-task">
+              <h4>Auto Mode Status</h4>
+              <div class="auto-status">
+                <div class="status-item">
+                  <span class="status-label">Conveyor State:</span>
+                  <span class="status-value" id="auto-conveyor-state">IDLE</span>
+                </div>
+                <div class="status-item">
+                  <span class="status-label">Current RFID:</span>
+                  <span class="status-value" id="current-rfid">None</span>
+                </div>
+                <div class="status-item">
+                  <span class="status-label">Target Cell:</span>
+                  <span class="status-value" id="target-cell">None</span>
+                </div>
+                <div class="status-item">
+                  <span class="status-label">Storage Strategy:</span>
+                  <span class="status-value" id="auto-strategy">NEAREST_EMPTY</span>
+                </div>
+              </div>
+
+              <h4>Auto Task Queue</h4>
+              <div id="task-queue" class="task-queue">
+                <div class="task-item empty-queue">No tasks in queue</div>
+              </div>
+              <div class="btn-row">
+                <button id="btn-add-task" class="btn-primary">
+                  <span class="btn-icon">+</span>
+                  Add Task
+                </button>
+                <button id="btn-clear-tasks" class="btn-secondary">
+                  Clear All
+                </button>
+                <button id="btn-start-auto" class="btn-success">
+                  ▶ Start Auto Mode
+                </button>
+                <button id="btn-stop-auto" class="btn-danger">
+                  ⏹ Stop Auto Mode
+                </button>
+              </div>
+            </div>
+
+            <div class="auto-actions">
+              <h4>Quick Actions</h4>
+              <div class="btn-grid">
+                <button id="btn-auto-stock" class="btn-action">
+                  Auto Stock from Conveyor
+                </button>
+                <button id="btn-auto-retrieve" class="btn-action">
+                  Retrieve to Loading Zone
+                </button>
+                <button id="btn-inventory-check" class="btn-action">
+                  Inventory Check
+                </button>
+                <button id="btn-auto-organize" class="btn-action">
+                  Auto Organize
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <div class="card">
+          <h3>Product Management</h3>
+          <div class="form-column">
+            <div class="form-group">
+              <label>Product Name:</label>
+              <input id="prod-name" type="text" placeholder="Enter product name" />
+            </div>
+            <div class="form-group">
+              <label>SKU:</label>
+              <input id="prod-sku" type="text" placeholder="Optional SKU" />
+            </div>
+            <div class="form-group">
+              <label>RFID UID:</label>
+              <input id="prod-rfid" type="text" placeholder="Optional RFID" />
+            </div>
+            <div class="form-group">
+              <label>Storage Strategy:</label>
+              <select id="prod-strategy">
+                <option value="NEAREST_EMPTY">Nearest Empty</option>
+                <option value="ROUND_ROBIN">Round Robin</option>
+                <option value="RANDOM">Random</option>
+                <option value="AI_OPTIMIZED">AI Optimized</option>
+                <option value="FIXED">Fixed Mapping</option>
+              </select>
+            </div>
+            <button id="btn-add-product" class="btn-primary">
+              Add New Product
+            </button>
+          </div>
+
+          <div class="divider"></div>
+
+          <div class="form-group">
+            <label>Assign Product to Cell:</label>
+            <div class="input-group">
+              <select id="cell-select"></select>
+              <select id="product-select"></select>
+              <input id="product-qty" type="number" min="1" max="99" value="1" />
+              <button id="btn-assign-product" class="btn-secondary">Assign</button>
+            </div>
+          </div>
+
+          <div class="form-group">
+            <label>Move to Loading Zone:</label>
+            <div class="input-group">
+              <select id="move-cell-select"></select>
+              <button id="btn-move-to-loading" class="btn-warning">Move to Loading</button>
+            </div>
+          </div>
+        </div>
+
+        <div class="card">
+          <div class="card-header">
+            <h3>IR Sensor Status (12 Cells)</h3>
+            <button id="btn-refresh-sensors" class="btn-icon">⟳</button>
+          </div>
+          <div class="sensor-grid">
+            <div class="sensor-row">
+              <div class="sensor-cell" data-row="1" data-col="1">
+                <div class="sensor-label">R1C1</div>
+                <div class="sensor-pin">Pin: 53</div>
+                <div class="sensor-status" data-status="empty">Empty</div>
+              </div>
+              <div class="sensor-cell" data-row="1" data-col="2">
+                <div class="sensor-label">R1C2</div>
+                <div class="sensor-pin">Pin: 31</div>
+                <div class="sensor-status" data-status="empty">Empty</div>
+              </div>
+              <div class="sensor-cell" data-row="1" data-col="3">
+                <div class="sensor-label">R1C3</div>
+                <div class="sensor-pin">Pin: 23</div>
+                <div class="sensor-status" data-status="empty">Empty</div>
+              </div>
+              <div class="sensor-cell" data-row="1" data-col="4">
+                <div class="sensor-label">R1C4</div>
+                <div class="sensor-pin">Pin: 30</div>
+                <div class="sensor-status" data-status="empty">Empty</div>
+              </div>
+            </div>
+            <div class="sensor-row">
+              <div class="sensor-cell" data-row="2" data-col="1">
+                <div class="sensor-label">R2C1</div>
+                <div class="sensor-pin">Pin: 52</div>
+                <div class="sensor-status" data-status="empty">Empty</div>
+              </div>
+              <div class="sensor-cell" data-row="2" data-col="2">
+                <div class="sensor-label">R2C2</div>
+                <div class="sensor-pin">Pin: 32</div>
+                <div class="sensor-status" data-status="empty">Empty</div>
+              </div>
+              <div class="sensor-cell" data-row="2" data-col="3">
+                <div class="sensor-label">R2C3</div>
+                <div class="sensor-pin">Pin: 33</div>
+                <div class="sensor-status" data-status="empty">Empty</div>
+              </div>
+              <div class="sensor-cell" data-row="2" data-col="4">
+                <div class="sensor-label">R2C4</div>
+                <div class="sensor-pin">Pin: 34</div>
+                <div class="sensor-status" data-status="empty">Empty</div>
+              </div>
+            </div>
+            <div class="sensor-row">
+              <div class="sensor-cell" data-row="3" data-col="1">
+                <div class="sensor-label">R3C1</div>
+                <div class="sensor-pin">Pin: 35</div>
+                <div class="sensor-status" data-status="empty">Empty</div>
+              </div>
+              <div class="sensor-cell" data-row="3" data-col="2">
+                <div class="sensor-label">R3C2</div>
+                <div class="sensor-pin">Pin: 25</div>
+                <div class="sensor-status" data-status="empty">Empty</div>
+              </div>
+              <div class="sensor-cell" data-row="3" data-col="3">
+                <div class="sensor-label">R3C3</div>
+                <div class="sensor-pin">Pin: 40</div>
+                <div class="sensor-status" data-status="empty">Empty</div>
+              </div>
+              <div class="sensor-cell" data-row="3" data-col="4">
+                <div class="sensor-label">R3C4</div>
+                <div class="sensor-pin">Pin: 22</div>
+                <div class="sensor-status" data-status="empty">Empty</div>
+              </div>
+            </div>
+          </div>
+          <div class="sensor-summary">
+            <div class="summary-item">
+              <span class="summary-label">Active Sensors:</span>
+              <span class="summary-value" id="active-sensor-count">0</span>
+            </div>
+            <div class="summary-item">
+              <span class="summary-label">Occupied Cells:</span>
+              <span class="summary-value" id="occupied-sensor-count">0</span>
+            </div>
+            <div class="summary-item">
+              <span class="summary-label">Last Update:</span>
+              <span class="summary-value" id="sensor-update-time">--:--:--</span>
+            </div>
+          </div>
+        </div>
+
+        <div class="card">
+          <div class="card-header">
+            <h3>Recent Operations</h3>
+            <button id="btn-refresh-ops" class="btn-icon">⟳</button>
+          </div>
+          <div class="table-container">
+            <table id="ops-table">
+              <thead>
+                <tr>
+                  <th>ID</th>
+                  <th>Type</th>
+                  <th>Command</th>
+                  <th>Status</th>
+                  <th>Cell</th>
+                  <th>Product</th>
+                  <th>Strategy</th>
+                  <th>Time</th>
+                </tr>
+              </thead>
+              <tbody></tbody>
+            </table>
+          </div>
+        </div>
+      </section>
+    </main>
+
+    <div id="loading-overlay" class="loading-overlay">
+      <div class="loading-content">
+        <div class="lds-ring large">
+          <div></div>
+          <div></div>
+          <div></div>
+          <div></div>
+        </div>
+        <h3 id="loading-title">Processing Command</h3>
+        <p id="loading-message">Please wait while the arm executes the command...</p>
+        <div class="progress-container">
+          <div class="progress-bar" id="progress-bar"></div>
+        </div>
+        <div class="loading-details">
+          <div class="detail-item">
+            <span class="detail-label">Current Step:</span>
+            <span class="detail-value" id="current-step">Initializing...</span>
+          </div>
+          <div class="detail-item">
+            <span class="detail-label">Estimated Time:</span>
+            <span class="detail-value" id="estimated-time">5s</span>
+          </div>
+          <div class="detail-item">
+            <span class="detail-label">Storage Strategy:</span>
+            <span class="detail-value" id="loading-strategy">NEAREST_EMPTY</span>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <div id="task-modal" class="modal">
+      <div class="modal-content">
+        <div class="modal-header">
+          <h3>Add Auto Task</h3>
+          <button class="modal-close">&times;</button>
+        </div>
+        <div class="modal-body">
+          <div class="form-group">
+            <label>Task Type:</label>
+            <select id="task-type">
+              <option value="STOCK">Stock from Conveyor</option>
+              <option value="RETRIEVE">Retrieve to Loading Zone</option>
+              <option value="MOVE">Move Between Cells</option>
+              <option value="ORGANIZE">Organize Warehouse</option>
+              <option value="INVENTORY_CHECK">Inventory Check</option>
+              <option value="LOADING_ZONE_OP">Loading Zone Operation</option>
+            </select>
+          </div>
+          <div class="form-group">
+            <label>Target Cell (if applicable):</label>
+            <select id="task-cell"></select>
+          </div>
+          <div class="form-group">
+            <label>Product (if applicable):</label>
+            <select id="task-product"></select>
+          </div>
+          <div class="form-group">
+            <label>Storage Strategy:</label>
+            <select id="task-strategy">
+              <option value="NEAREST_EMPTY">Nearest Empty</option>
+              <option value="ROUND_ROBIN">Round Robin</option>
+              <option value="RANDOM">Random</option>
+              <option value="AI_OPTIMIZED">AI Optimized</option>
+              <option value="FIXED">Fixed Mapping</option>
+            </select>
+          </div>
+          <div class="form-group">
+            <label>Priority:</label>
+            <select id="task-priority">
+              <option value="low">Low</option>
+              <option value="medium" selected>Medium</option>
+              <option value="high">High</option>
+              <option value="urgent">Urgent</option>
+            </select>
+          </div>
+          <div class="form-group">
+            <label>Parameters (JSON):</label>
+            <textarea id="task-parameters" rows="3" placeholder='{"rfid": "12.80.110.3", "quantity": 1}'></textarea>
+          </div>
+        </div>
+        <div class="modal-footer">
+          <button id="btn-cancel-task" class="btn-secondary">Cancel</button>
+          <button id="btn-save-task" class="btn-primary">Add Task</button>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <div id="notification-container"></div>
+
+  <script src="app.js"></script>
+</body>
+
+</html>
